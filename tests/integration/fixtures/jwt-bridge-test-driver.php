@@ -73,6 +73,23 @@ add_action('jwt_login_register_validators', function (): void {
 });
 
 add_action('rest_api_init', function (): void {
+    register_rest_route('jwt-bridge-test/v1', '/authenticated-user', [
+        'methods'             => 'GET',
+        'permission_callback' => 'jwt_bridge_test_authorized',
+        'callback'            => function (): WP_REST_Response {
+            // REST cookie authentication requires a REST nonce, so validate the
+            // browser cookie directly to observe the identity selected by PHP.
+            $cookie = isset($_COOKIE[LOGGED_IN_COOKIE]) && is_string($_COOKIE[LOGGED_IN_COOKIE])
+                ? wp_unslash($_COOKIE[LOGGED_IN_COOKIE])
+                : '';
+            $user_id = $cookie !== '' ? wp_validate_auth_cookie($cookie, 'logged_in') : false;
+
+            return new WP_REST_Response([
+                'user_id' => $user_id ? (int) $user_id : 0,
+            ]);
+        },
+    ]);
+
     register_rest_route('jwt-bridge-test/v1', '/session-count', [
         'methods'             => 'GET',
         'permission_callback' => 'jwt_bridge_test_authorized',

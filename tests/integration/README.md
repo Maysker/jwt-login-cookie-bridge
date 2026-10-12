@@ -28,7 +28,15 @@ Prerequisites are Docker Compose, OpenSSL, curl, and Python 3.
 tests/integration/run.sh
 ```
 
+Optional real-browser coverage requires Selenium in an isolated Python environment. Pass its Python executable with `JWT_BRIDGE_BROWSER_PYTHON`; the runner tests Chromium and Firefox by default. Override `JWT_BRIDGE_BROWSERS` with a space-separated subset when only one driver is available.
+
+```bash
+JWT_BRIDGE_BROWSER_PYTHON=/tmp/jwt-bridge-browser-venv/bin/python tests/integration/run.sh
+```
+
 The runner creates a temporary directory containing random database, WordPress, test-user, and endpoint credentials plus a one-day self-signed certificate. Nothing secret is written inside the repository. Containers, volumes, and the temporary directory are removed at exit. Set `KEEP_INTEGRATION=1` only for local debugging.
+
+All cookie-scope and validator-configuration scenarios run even when one scenario fails. The runner retains a nonzero final exit status if any scenario failed.
 
 The HTTPS endpoint uses `shop.example.test` through curl's `--resolve` option, so `/etc/hosts` is not modified. The runner executes the suite with no bridge-domain override, with the exact host, and with `.example.test` as a parent domain. WordPress core retains its default host-only `COOKIE_DOMAIN` behavior in all three scenarios.
 
@@ -47,8 +55,15 @@ The tests cover:
 - Fail-closed behavior for unconfigured, missing, and duplicate validator registrations.
 - Browser-cookie/JWT identity conflicts, ambiguous transports, query tokens, checkout redirect, popup, and bounce responses.
 - Transport-aware Origin enforcement for Bearer, form, and JSON tokens, including canonical ports and rejection before JWT validation.
+- Mixed standard-login and Bridge-login sequences for the same and different users, including cookie scope, session-token association, resolved request identity, rejection without session creation, and logout expiration headers.
 
 Standard logout must both revoke the bridge-created session and leave no WordPress authentication cookies in curl's cookie jar in every scope scenario.
+
+## Mixed-login scope transitions
+
+When core and Bridge cookie domains differ, successful login transitions keep only the newly authoritative browser scope. Bridge login expires core-scope tuples before issuing Bridge cookies, while the `wp_login` transition expires Bridge-scope tuples after core has issued its cookies. This prevents same-name cookies with different session tokens from competing during authentication and logout.
+
+The regression suite covers the original exact-host failures as well as parent-domain transitions. Real Chromium and Firefox coverage remains necessary because same-name cookie storage and ordering are user-agent behavior.
 
 The test-only must-use plugin is copied into the disposable WordPress volume and protects its endpoints with a generated secret. It directly calls `jwt_login_cookie_set_auth_cookies()` only for Phase 1 lifecycle tests. Phase 2 cases issue and verify real HS256 JWTs with `firebase/php-jwt`; the random key remains in the temporary runtime directory and is removed at exit. This validator is test infrastructure, not a supported production provider.
 
@@ -56,4 +71,5 @@ Not covered without additional configuration:
 
 - Production proxy/header behavior and production cookie-domain overrides.
 - Browser-specific Origin emission, third-party-cookie, popup, and iframe behavior.
+- Browser-specific ordering of same-name cookies at overlapping host-only and Domain scopes; curl's cookie jar is useful regression coverage but is not a substitute for Chromium and Firefox.
 - A completed WooCommerce payment. The bridge checkout redirect, popup, and bounce responses are covered, but real-browser behavior, CORS, CSP, and login-CSRF/Origin enforcement are not.

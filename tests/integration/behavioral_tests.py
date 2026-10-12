@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import html
 import json
 import os
@@ -16,6 +17,7 @@ TEST_SECRET = os.environ["JWT_BRIDGE_TEST_SECRET"]
 TEST_USER_ID = os.environ["JWT_BRIDGE_TEST_USER_ID"]
 TEST_USER_B_ID = os.environ["JWT_BRIDGE_TEST_USER_B_ID"]
 TEST_USERNAME = os.environ["JWT_BRIDGE_TEST_USERNAME"]
+TEST_USER_B_USERNAME = os.environ["JWT_BRIDGE_TEST_USER_B_USERNAME"]
 TEST_PASSWORD = os.environ["JWT_BRIDGE_TEST_PASSWORD"]
 TEST_APPLICATION_PASSWORD = os.environ["JWT_BRIDGE_TEST_APPLICATION_PASSWORD"]
 EXPECTED_COOKIE_DOMAIN = os.environ["JWT_BRIDGE_EXPECTED_COOKIE_DOMAIN"]
@@ -103,7 +105,18 @@ class CurlClient:
                 continue
             fields = line.split("\t")
             if len(fields) == 7 and fields[5].startswith("wordpress_") and fields[5] != "wordpress_test_cookie":
-                cookies.append({"domain": fields[0], "path": fields[2], "name": fields[5]})
+                decoded_value = unquote(fields[6])
+                value_parts = decoded_value.split("|")
+                token_fingerprint = None
+                if len(value_parts) >= 3:
+                    token_fingerprint = hashlib.sha256(value_parts[2].encode("utf-8")).hexdigest()
+                cookies.append({
+                    "domain": fields[0].lstrip(".").lower(),
+                    "host_only": fields[1].upper() == "FALSE",
+                    "path": fields[2],
+                    "name": fields[5],
+                    "token_fingerprint": token_fingerprint,
+                })
         return cookies
 
 
@@ -154,11 +167,11 @@ class WordPressCookieIntegrationTests(unittest.TestCase):
         self.assertEqual(200, status, headers)
         return json.loads(body)["token"]
 
-    def standard_login(self, client):
+    def standard_login(self, client, username=TEST_USERNAME):
         status, _, _ = client.request("/wp-login.php")
         self.assertEqual(200, status)
         payload = urlencode({
-            "log": TEST_USERNAME,
+            "log": username,
             "pwd": TEST_PASSWORD,
             "wp-submit": "Log In",
             "redirect_to": BASE_URL + "/wp-admin/",
@@ -170,6 +183,22 @@ class WordPressCookieIntegrationTests(unittest.TestCase):
             data=payload,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+
+    def bridge_login(self, client, user_id=TEST_USER_ID):
+        token = self.issue_token(user_id=user_id)
+        return client.request(
+            "/wp-json/custom/v1/login_via_jwt",
+            method="POST",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    def authenticated_user_id(self, client):
+        status, headers, body = client.request(
+            "/wp-json/jwt-bridge-test/v1/authenticated-user/",
+            headers={"X-JWT-Bridge-Test-Secret": TEST_SECRET},
+        )
+        self.assertEqual(200, status, headers)
+        return int(json.loads(body)["user_id"])
 
     def logout_url(self, client):
         status, _, _ = client.request("/wp-admin/", follow=True)
@@ -183,12 +212,59 @@ class WordPressCookieIntegrationTests(unittest.TestCase):
     def assert_no_conflicting_set_cookies(self, cookies):
         self.assertEqual([], conflicting_cookie_identities(cookies))
 
-    def bridge_auth_cookies(self, response_headers):
+    def cookie_identity(self, cookie):
+        domain = cookie["attributes"].get("domain")
+        scope = domain.lstrip(".").lower() if domain else "<host-only>"
+        return (cookie["name"], scope, cookie["attributes"].get("path", "<default-path>"))
+
+    def stored_cookie_identity(self, cookie):
+        scope = "<host-only>" if cookie["host_only"] else cookie["domain"]
+        return (cookie["name"], scope, cookie["path"])
+
+    def assert_logout_clears_browser_authentication(self, client):
+        stored_before = client.stored_wordpress_auth_cookies()
+        self.assertNotEqual([], stored_before)
+
+        logout_path = self.logout_url(client)
+        status, logout_headers, _ = client.request(logout_path)
+        self.assertEqual(302, status)
+
+        self.assert_expiration_headers_cover(logout_headers, stored_before)
+
+        self.assertEqual([], client.stored_wordpress_auth_cookies())
+        self.assertEqual(0, self.authenticated_user_id(client))
+        status, _, _ = client.request("/wp-admin/")
+        self.assertEqual(302, status)
+        return logout_headers
+
+    def expiration_auth_cookies(self, response_headers):
         return [
             cookie for cookie in parse_set_cookies(response_headers)
             if cookie["name"].startswith("wordpress_")
             and cookie["name"] != "wordpress_test_cookie"
+            and cookie["attributes"].get("max-age") == "0"
         ]
+
+    def assert_expiration_headers_cover(self, response_headers, stored_cookies, require_unique=False):
+        expiration_cookies = self.expiration_auth_cookies(response_headers)
+        self.assert_no_conflicting_set_cookies(expiration_cookies)
+        expiration_identities = [self.cookie_identity(cookie) for cookie in expiration_cookies]
+        if require_unique:
+            self.assertEqual(len(expiration_identities), len(set(expiration_identities)))
+        expired_identities = set(expiration_identities)
+        for stored_cookie in stored_cookies:
+            self.assertIn(self.stored_cookie_identity(stored_cookie), expired_identities)
+
+    def active_auth_cookies(self, response_headers):
+        return [
+            cookie for cookie in parse_set_cookies(response_headers)
+            if cookie["name"].startswith("wordpress_")
+            and cookie["name"] != "wordpress_test_cookie"
+            and cookie not in self.expiration_auth_cookies(response_headers)
+        ]
+
+    def bridge_auth_cookies(self, response_headers):
+        return self.active_auth_cookies(response_headers)
 
     def assert_bridge_cookie_scope(self, cookies):
         self.assertEqual(3, len(cookies))
@@ -205,14 +281,57 @@ class WordPressCookieIntegrationTests(unittest.TestCase):
         self.assertTrue(all(cookie["attributes"].get("httponly") is True for cookie in cookies))
         self.assertTrue(all(cookie["attributes"].get("samesite") == "None" for cookie in cookies))
 
+    def assert_one_browser_identity(self, client, expected_user_id):
+        self.assertEqual(int(expected_user_id), self.authenticated_user_id(client))
+        cookies = client.stored_wordpress_auth_cookies()
+        self.assertNotEqual([], cookies)
+        self.assertTrue(all(cookie["token_fingerprint"] for cookie in cookies))
+        return cookies
+
+    def assert_transition_scope(self, response_headers, previous_cookies, client, expected_host_only):
+        if EXPECTED_COOKIE_DOMAIN:
+            self.assert_expiration_headers_cover(
+                response_headers, previous_cookies, require_unique=True
+            )
+            auth_cookies = [
+                cookie for cookie in parse_set_cookies(response_headers)
+                if cookie["name"].startswith("wordpress_")
+                and cookie["name"] != "wordpress_test_cookie"
+            ]
+            expiration_indexes = [
+                index for index, cookie in enumerate(auth_cookies)
+                if cookie["attributes"].get("max-age") == "0"
+            ]
+            active_indexes = [
+                index for index, cookie in enumerate(auth_cookies)
+                if cookie["attributes"].get("max-age") != "0"
+            ]
+            self.assertTrue(expiration_indexes)
+            self.assertTrue(active_indexes)
+            if expected_host_only:
+                self.assertLess(max(active_indexes), min(expiration_indexes))
+            else:
+                self.assertLess(max(expiration_indexes), min(active_indexes))
+
+            expired_identities = {
+                self.cookie_identity(auth_cookies[index]) for index in expiration_indexes
+            }
+            active_identities = {
+                self.cookie_identity(auth_cookies[index]) for index in active_indexes
+            }
+            self.assertTrue(expired_identities.isdisjoint(active_identities))
+        cookies = client.stored_wordpress_auth_cookies()
+        self.assertNotEqual([], cookies)
+        self.assertTrue(all(cookie["host_only"] is expected_host_only for cookie in cookies))
+
     def test_01_standard_wordpress_login_and_logout(self):
         self.assertEqual(0, self.session_count())
         client = CurlClient(self.directory, "standard-login-cookies.txt")
 
         status, headers, _ = self.standard_login(client)
         self.assertEqual(302, status)
-        cookies = parse_set_cookies(headers)
-        self.assert_no_conflicting_set_cookies(cookies)
+        self.assert_no_conflicting_set_cookies(parse_set_cookies(headers))
+        cookies = self.active_auth_cookies(headers)
 
         secure_auth = [cookie for cookie in cookies if cookie["name"].startswith("wordpress_sec_")]
         logged_in = [cookie for cookie in cookies if cookie["name"].startswith("wordpress_logged_in_")]
@@ -584,6 +703,181 @@ class WordPressCookieIntegrationTests(unittest.TestCase):
         self.assertIn("payment-complete", body)
         self.assertIn("window.location.replace", body)
         self.assertEqual(1, self.session_count())
+
+    def test_13_standard_a_then_bridge_a_then_logout(self):
+        client = CurlClient(self.directory, "mixed-standard-a-bridge-a.txt")
+        status, _, _ = self.standard_login(client)
+        self.assertEqual(302, status)
+        self.assertEqual(int(TEST_USER_ID), self.authenticated_user_id(client))
+        self.assertEqual(1, self.session_count(TEST_USER_ID))
+        standard_cookies = client.stored_wordpress_auth_cookies()
+
+        status, headers, body = self.bridge_login(client, TEST_USER_ID)
+        self.assertEqual(200, status, body)
+        self.assert_bridge_cookie_scope(self.bridge_auth_cookies(headers))
+        self.assert_transition_scope(
+            headers, standard_cookies, client, expected_host_only=not bool(EXPECTED_COOKIE_DOMAIN)
+        )
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+        self.assertEqual(2, self.session_count(TEST_USER_ID))
+
+        self.assert_logout_clears_browser_authentication(client)
+        self.assertEqual(1, self.session_count(TEST_USER_ID))
+
+    def test_14_bridge_a_then_standard_a_then_logout(self):
+        client = CurlClient(self.directory, "mixed-bridge-a-standard-a.txt")
+        status, headers, body = self.bridge_login(client, TEST_USER_ID)
+        self.assertEqual(200, status, body)
+        self.assert_bridge_cookie_scope(self.bridge_auth_cookies(headers))
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+        bridge_cookies = client.stored_wordpress_auth_cookies()
+
+        status, standard_headers, _ = self.standard_login(client)
+        self.assertEqual(302, status)
+        self.assert_transition_scope(
+            standard_headers, bridge_cookies, client, expected_host_only=True
+        )
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+        self.assertEqual(2, self.session_count(TEST_USER_ID))
+
+        self.assert_logout_clears_browser_authentication(client)
+        self.assertEqual(1, self.session_count(TEST_USER_ID))
+
+    def test_15_repeated_bridge_a_then_logout(self):
+        client = CurlClient(self.directory, "mixed-repeated-bridge-a.txt")
+        first_status, first_headers, first_body = self.bridge_login(client, TEST_USER_ID)
+        self.assertEqual(200, first_status, first_body)
+        self.assert_bridge_cookie_scope(self.bridge_auth_cookies(first_headers))
+        first_fingerprints = {
+            cookie["token_fingerprint"] for cookie in self.assert_one_browser_identity(client, TEST_USER_ID)
+        }
+
+        second_status, second_headers, second_body = self.bridge_login(client, TEST_USER_ID)
+        self.assertEqual(200, second_status, second_body)
+        self.assert_bridge_cookie_scope(self.bridge_auth_cookies(second_headers))
+        second_fingerprints = {
+            cookie["token_fingerprint"] for cookie in self.assert_one_browser_identity(client, TEST_USER_ID)
+        }
+        self.assertNotEqual(first_fingerprints, second_fingerprints)
+        self.assertTrue(all(
+            cookie["host_only"] is (not bool(EXPECTED_COOKIE_DOMAIN))
+            for cookie in client.stored_wordpress_auth_cookies()
+        ))
+        self.assertEqual(2, self.session_count(TEST_USER_ID))
+
+        self.assert_logout_clears_browser_authentication(client)
+        self.assertEqual(1, self.session_count(TEST_USER_ID))
+
+    def test_16_standard_a_logout_then_bridge_a(self):
+        client = CurlClient(self.directory, "mixed-standard-a-logout-bridge-a.txt")
+        status, _, _ = self.standard_login(client)
+        self.assertEqual(302, status)
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+        self.assert_logout_clears_browser_authentication(client)
+        self.assertEqual(0, self.session_count(TEST_USER_ID))
+
+        status, headers, body = self.bridge_login(client, TEST_USER_ID)
+        self.assertEqual(200, status, body)
+        self.assert_bridge_cookie_scope(self.bridge_auth_cookies(headers))
+        self.assertTrue(all(
+            cookie["host_only"] is (not bool(EXPECTED_COOKIE_DOMAIN))
+            for cookie in client.stored_wordpress_auth_cookies()
+        ))
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+        self.assertEqual(1, self.session_count(TEST_USER_ID))
+
+    def test_17_standard_a_then_bridge_b_is_rejected(self):
+        client = CurlClient(self.directory, "mixed-standard-a-bridge-b.txt")
+        status, _, _ = self.standard_login(client)
+        self.assertEqual(302, status)
+        cookies_before = client.stored_wordpress_auth_cookies()
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+
+        status, headers, _ = self.bridge_login(client, TEST_USER_B_ID)
+        self.assertEqual(409, status)
+        self.assertEqual([], self.bridge_auth_cookies(headers))
+        self.assertEqual(cookies_before, client.stored_wordpress_auth_cookies())
+        self.assertEqual(1, self.session_count(TEST_USER_ID))
+        self.assertEqual(0, self.session_count(TEST_USER_B_ID))
+        self.assertEqual(int(TEST_USER_ID), self.authenticated_user_id(client))
+
+    def test_18_bridge_a_then_standard_b_then_logout(self):
+        client = CurlClient(self.directory, "mixed-bridge-a-standard-b.txt")
+        status, headers, body = self.bridge_login(client, TEST_USER_ID)
+        self.assertEqual(200, status, body)
+        self.assert_bridge_cookie_scope(self.bridge_auth_cookies(headers))
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+        bridge_cookies = client.stored_wordpress_auth_cookies()
+
+        status, standard_headers, _ = self.standard_login(client, TEST_USER_B_USERNAME)
+        self.assertEqual(302, status)
+        self.assert_transition_scope(
+            standard_headers, bridge_cookies, client, expected_host_only=True
+        )
+        self.assert_one_browser_identity(client, TEST_USER_B_ID)
+        self.assertEqual(1, self.session_count(TEST_USER_ID))
+        self.assertEqual(1, self.session_count(TEST_USER_B_ID))
+
+        self.assert_logout_clears_browser_authentication(client)
+        self.assertEqual(1, self.session_count(TEST_USER_ID))
+        self.assertEqual(0, self.session_count(TEST_USER_B_ID))
+
+    def test_19_bridge_a_logout_then_standard_b(self):
+        client = CurlClient(self.directory, "mixed-bridge-a-logout-standard-b.txt")
+        status, headers, body = self.bridge_login(client, TEST_USER_ID)
+        self.assertEqual(200, status, body)
+        self.assert_bridge_cookie_scope(self.bridge_auth_cookies(headers))
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+        self.assert_logout_clears_browser_authentication(client)
+        self.assertEqual(0, self.session_count(TEST_USER_ID))
+
+        status, _, _ = self.standard_login(client, TEST_USER_B_USERNAME)
+        self.assertEqual(302, status)
+        self.assert_one_browser_identity(client, TEST_USER_B_ID)
+        self.assertEqual(1, self.session_count(TEST_USER_B_ID))
+
+    def test_20_standard_a_logout_then_bridge_b(self):
+        client = CurlClient(self.directory, "mixed-standard-a-logout-bridge-b.txt")
+        status, _, _ = self.standard_login(client)
+        self.assertEqual(302, status)
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+        self.assert_logout_clears_browser_authentication(client)
+        self.assertEqual(0, self.session_count(TEST_USER_ID))
+
+        status, headers, body = self.bridge_login(client, TEST_USER_B_ID)
+        self.assertEqual(200, status, body)
+        self.assert_bridge_cookie_scope(self.bridge_auth_cookies(headers))
+        self.assert_one_browser_identity(client, TEST_USER_B_ID)
+        self.assertEqual(1, self.session_count(TEST_USER_B_ID))
+
+    def test_21_repeated_core_bridge_scope_transitions(self):
+        client = CurlClient(self.directory, "mixed-repeated-scope-transitions.txt")
+        status, _, _ = self.standard_login(client)
+        self.assertEqual(302, status)
+        self.assert_one_browser_identity(client, TEST_USER_ID)
+
+        for _ in range(2):
+            core_cookies = client.stored_wordpress_auth_cookies()
+            status, bridge_headers, body = self.bridge_login(client, TEST_USER_ID)
+            self.assertEqual(200, status, body)
+            self.assert_bridge_cookie_scope(self.bridge_auth_cookies(bridge_headers))
+            self.assert_transition_scope(
+                bridge_headers,
+                core_cookies,
+                client,
+                expected_host_only=not bool(EXPECTED_COOKIE_DOMAIN),
+            )
+            self.assert_one_browser_identity(client, TEST_USER_ID)
+
+            bridge_cookies = client.stored_wordpress_auth_cookies()
+            status, core_headers, _ = self.standard_login(client)
+            self.assertEqual(302, status)
+            self.assert_transition_scope(
+                core_headers, bridge_cookies, client, expected_host_only=True
+            )
+            self.assert_one_browser_identity(client, TEST_USER_ID)
+
+        self.assert_logout_clears_browser_authentication(client)
 
 
 if __name__ == "__main__":

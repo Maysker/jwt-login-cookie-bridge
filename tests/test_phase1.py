@@ -50,16 +50,35 @@ class PhaseOneRegressionTests(unittest.TestCase):
     def test_explicit_bridge_domain_is_cleared_on_core_logout(self):
         clearer = self.function_source("jwt_login_cookie_clear_auth_cookies")
         self.assertIn("JWT_LOGIN_COOKIE_DOMAIN", clearer)
-        self.assertIn("COOKIE_DOMAIN", clearer)
-        self.assertIn("time() - YEAR_IN_SECONDS", clearer)
-        self.assertIn("'secure'   => true", clearer)
-        self.assertIn("'httponly' => true", clearer)
-        self.assertIn("'samesite' => 'None'", clearer)
-        self.assertIn("setcookie(AUTH_COOKIE", clearer)
-        self.assertIn("setcookie(SECURE_AUTH_COOKIE", clearer)
-        self.assertIn("setcookie(LOGGED_IN_COOKIE", clearer)
+        self.assertIn("jwt_login_cookie_scopes_differ()", clearer)
+        self.assertIn("jwt_login_cookie_expire_bridge_scope()", clearer)
+
+        expirer = self.function_source("jwt_login_cookie_expire_tuples")
+        self.assertIn("time() - YEAR_IN_SECONDS", expirer)
+        self.assertIn("'secure'   => true", expirer)
+        self.assertIn("'httponly' => true", expirer)
+        self.assertIn("'samesite' => 'None'", expirer)
+        self.assertIn("setcookie($tuple['name']", expirer)
+
+        bridge_scope = self.function_source("jwt_login_cookie_expire_bridge_scope")
+        self.assertIn("AUTH_COOKIE", bridge_scope)
+        self.assertIn("SECURE_AUTH_COOKIE", bridge_scope)
+        self.assertIn("LOGGED_IN_COOKIE", bridge_scope)
         self.assertIn(
             "add_action('clear_auth_cookie', 'jwt_login_cookie_clear_auth_cookies')",
+            self.source,
+        )
+
+    def test_mixed_login_transitions_clear_the_other_cookie_scope(self):
+        scope_check = self.function_source("jwt_login_cookie_scopes_differ")
+        self.assertIn("($bridge_domain === '') !== ($core_domain === '')", scope_check)
+
+        core_cleanup = self.source.index("jwt_login_cookie_expire_core_scope();")
+        bridge_set = self.source.index("jwt_login_cookie_set_auth_cookies($user_id, true);", core_cleanup)
+        self.assertLess(core_cleanup, bridge_set)
+
+        self.assertIn(
+            "add_action('wp_login', 'jwt_login_cookie_clear_bridge_scope_after_core_login', 10, 0)",
             self.source,
         )
 

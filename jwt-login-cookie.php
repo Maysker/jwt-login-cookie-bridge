@@ -100,6 +100,101 @@ if (!function_exists('jwt_login_cookie_domain')) {
     }
 }
 
+if (!function_exists('jwt_login_core_cookie_domain')) {
+    /**
+     * Return the cookie domain used by WordPress core.
+     */
+    function jwt_login_core_cookie_domain(): string {
+        return defined('COOKIE_DOMAIN') && COOKIE_DOMAIN ? (string) COOKIE_DOMAIN : '';
+    }
+}
+
+if (!function_exists('jwt_login_cookie_scopes_differ')) {
+    /**
+     * Whether core and Bridge cookies use distinct browser storage scopes.
+     */
+    function jwt_login_cookie_scopes_differ(): bool {
+        $bridge_domain = jwt_login_cookie_domain();
+        $core_domain   = jwt_login_core_cookie_domain();
+
+        // An omitted Domain is host-only and differs from an explicit Domain,
+        // including when that explicit Domain names the current site host.
+        if (($bridge_domain === '') !== ($core_domain === '')) {
+            return true;
+        }
+
+        $normalize = static function (string $value): string {
+            return ltrim(strtolower($value), '.');
+        };
+
+        return $normalize($bridge_domain) !== $normalize($core_domain);
+    }
+}
+
+if (!function_exists('jwt_login_cookie_expire_tuples')) {
+    /**
+     * Expire unique authentication cookie name/path tuples at one domain scope.
+     *
+     * @param array<int,array{name:string,path:string}> $tuples
+     */
+    function jwt_login_cookie_expire_tuples(array $tuples, string $domain): void {
+        $options = [
+            'expires'  => time() - YEAR_IN_SECONDS,
+            'domain'   => $domain,
+            'secure'   => true,
+            'httponly' => true,
+            'samesite' => 'None',
+        ];
+        $sent = [];
+
+        foreach ($tuples as $tuple) {
+            $identity = $tuple['name'] . "\0" . $domain . "\0" . $tuple['path'];
+            if (isset($sent[$identity])) {
+                continue;
+            }
+            $sent[$identity] = true;
+            setcookie($tuple['name'], '', array_merge($options, ['path' => $tuple['path']]));
+        }
+    }
+}
+
+if (!function_exists('jwt_login_cookie_expire_bridge_scope')) {
+    /**
+     * Expire the exact three cookie tuples emitted by the Bridge.
+     */
+    function jwt_login_cookie_expire_bridge_scope(): void {
+        $auth_path   = defined('ADMIN_COOKIE_PATH') ? ADMIN_COOKIE_PATH : '/wp-admin';
+        $logged_path = defined('COOKIEPATH') && COOKIEPATH ? COOKIEPATH : '/';
+
+        jwt_login_cookie_expire_tuples([
+            ['name' => AUTH_COOKIE, 'path' => $auth_path],
+            ['name' => SECURE_AUTH_COOKIE, 'path' => $auth_path],
+            ['name' => LOGGED_IN_COOKIE, 'path' => $logged_path],
+        ], jwt_login_cookie_domain());
+    }
+}
+
+if (!function_exists('jwt_login_cookie_expire_core_scope')) {
+    /**
+     * Expire authentication cookie tuples issued by WordPress core.
+     */
+    function jwt_login_cookie_expire_core_scope(): void {
+        $admin_path   = defined('ADMIN_COOKIE_PATH') ? (string) ADMIN_COOKIE_PATH : '/wp-admin';
+        $plugins_path = defined('PLUGINS_COOKIE_PATH') ? (string) PLUGINS_COOKIE_PATH : '/wp-content/plugins';
+        $cookie_path  = defined('COOKIEPATH') ? (string) COOKIEPATH : '/';
+        $site_path    = defined('SITECOOKIEPATH') ? (string) SITECOOKIEPATH : '/';
+
+        jwt_login_cookie_expire_tuples([
+            ['name' => AUTH_COOKIE, 'path' => $admin_path],
+            ['name' => SECURE_AUTH_COOKIE, 'path' => $admin_path],
+            ['name' => AUTH_COOKIE, 'path' => $plugins_path],
+            ['name' => SECURE_AUTH_COOKIE, 'path' => $plugins_path],
+            ['name' => LOGGED_IN_COOKIE, 'path' => $cookie_path],
+            ['name' => LOGGED_IN_COOKIE, 'path' => $site_path],
+        ], jwt_login_core_cookie_domain());
+    }
+}
+
 if (!function_exists('jwt_login_cookie_set_auth_cookies')) {
     /**
      * Set WP auth cookies manually with SameSite=None; Secure; HttpOnly.
@@ -163,35 +258,29 @@ if (!function_exists('jwt_login_cookie_clear_auth_cookies')) {
             return;
         }
 
-        $domain      = jwt_login_cookie_domain();
-        $core_domain = defined('COOKIE_DOMAIN') ? (string) COOKIE_DOMAIN : '';
-        $normalized  = static function (string $value): string {
-            return ltrim(strtolower($value), '.');
-        };
-
         // Core clears this scope itself when the configured domains match.
-        if ($normalized($domain) === $normalized($core_domain)) {
+        if (!jwt_login_cookie_scopes_differ()) {
             return;
         }
 
-        $expiration  = time() - YEAR_IN_SECONDS;
-        $auth_path   = defined('ADMIN_COOKIE_PATH') ? ADMIN_COOKIE_PATH : '/wp-admin';
-        $logged_path = defined('COOKIEPATH') && COOKIEPATH ? COOKIEPATH : '/';
-        $options      = [
-            'expires'  => $expiration,
-            'domain'   => $domain,
-            'secure'   => true,
-            'httponly' => true,
-            'samesite' => 'None',
-        ];
-
-        setcookie(AUTH_COOKIE, '', array_merge($options, ['path' => $auth_path]));
-        setcookie(SECURE_AUTH_COOKIE, '', array_merge($options, ['path' => $auth_path]));
-        setcookie(LOGGED_IN_COOKIE, '', array_merge($options, ['path' => $logged_path]));
+        jwt_login_cookie_expire_bridge_scope();
     }
 }
 
 add_action('clear_auth_cookie', 'jwt_login_cookie_clear_auth_cookies');
+
+if (!function_exists('jwt_login_cookie_clear_bridge_scope_after_core_login')) {
+    /**
+     * Keep successful core login authoritative when cookie scopes differ.
+     */
+    function jwt_login_cookie_clear_bridge_scope_after_core_login(): void {
+        if (jwt_login_cookie_scopes_differ()) {
+            jwt_login_cookie_expire_bridge_scope();
+        }
+    }
+}
+
+add_action('wp_login', 'jwt_login_cookie_clear_bridge_scope_after_core_login', 10, 0);
 
 if (!function_exists('jwt_login_maybe_bootstrap_woo_session')) {
     /**
@@ -443,6 +532,9 @@ add_action('rest_api_init', function () {
 
             // 5) Set current user + cookies and optionally initialize Woo session.
             wp_set_current_user($user_id);
+            if (jwt_login_cookie_scopes_differ()) {
+                jwt_login_cookie_expire_core_scope();
+            }
             jwt_login_cookie_set_auth_cookies($user_id, true);
             jwt_login_maybe_bootstrap_woo_session();
 

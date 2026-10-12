@@ -137,22 +137,63 @@ run_cookie_scope() {
     JWT_LOGIN_COOKIE_DOMAIN="$cookie_domain" "${compose[@]}" up --detach --no-deps --force-recreate wordpress
     wait_for_wordpress
 
-    PYTHONDONTWRITEBYTECODE=1 \
-    JWT_BRIDGE_BASE_URL="$base_url" \
-    JWT_BRIDGE_CURL_RESOLVE="$curl_resolve" \
-    JWT_BRIDGE_TEST_SECRET="$test_secret" \
-    JWT_BRIDGE_TEST_USER_ID="$test_user_id" \
-    JWT_BRIDGE_TEST_USER_B_ID="$test_user_b_id" \
-    JWT_BRIDGE_TEST_USERNAME=integration-user \
-    JWT_BRIDGE_TEST_PASSWORD="$test_password" \
-    JWT_BRIDGE_TEST_APPLICATION_PASSWORD="$test_application_password" \
-    JWT_BRIDGE_EXPECTED_COOKIE_DOMAIN="$cookie_domain" \
-    python3 "$integration_dir/behavioral_tests.py"
+    if [[ "${JWT_BRIDGE_SKIP_BEHAVIORAL:-0}" != "1" ]]; then
+        PYTHONDONTWRITEBYTECODE=1 \
+        JWT_BRIDGE_BASE_URL="$base_url" \
+        JWT_BRIDGE_CURL_RESOLVE="$curl_resolve" \
+        JWT_BRIDGE_TEST_SECRET="$test_secret" \
+        JWT_BRIDGE_TEST_USER_ID="$test_user_id" \
+        JWT_BRIDGE_TEST_USER_B_ID="$test_user_b_id" \
+        JWT_BRIDGE_TEST_USERNAME=integration-user \
+        JWT_BRIDGE_TEST_USER_B_USERNAME=integration-user-b \
+        JWT_BRIDGE_TEST_PASSWORD="$test_password" \
+        JWT_BRIDGE_TEST_APPLICATION_PASSWORD="$test_application_password" \
+        JWT_BRIDGE_EXPECTED_COOKIE_DOMAIN="$cookie_domain" \
+        python3 "$integration_dir/behavioral_tests.py"
+    fi
+
+    if [[ -n "${JWT_BRIDGE_BROWSER_PYTHON:-}" ]]; then
+        local browser_test_args=()
+        if [[ -n "${JWT_BRIDGE_BROWSER_TEST:-}" ]]; then
+            browser_test_args+=("$JWT_BRIDGE_BROWSER_TEST")
+        fi
+        for browser in ${JWT_BRIDGE_BROWSERS:-chromium firefox}; do
+            JWT_BRIDGE_BASE_URL="$base_url" \
+            JWT_BRIDGE_TEST_SECRET="$test_secret" \
+            JWT_BRIDGE_TEST_USER_ID="$test_user_id" \
+            JWT_BRIDGE_TEST_USER_B_ID="$test_user_b_id" \
+            JWT_BRIDGE_TEST_USERNAME=integration-user \
+            JWT_BRIDGE_TEST_USER_B_USERNAME=integration-user-b \
+            JWT_BRIDGE_TEST_PASSWORD="$test_password" \
+            JWT_BRIDGE_EXPECTED_COOKIE_DOMAIN="$cookie_domain" \
+            JWT_BRIDGE_BROWSER="$browser" \
+            "$JWT_BRIDGE_BROWSER_PYTHON" "$integration_dir/browser_tests.py" \
+                "${browser_test_args[@]}"
+        done
+    fi
 }
 
-run_cookie_scope host-only ''
-run_cookie_scope exact-host 'shop.example.test'
-run_cookie_scope parent-domain '.example.test'
+suite_status=0
+case "${JWT_BRIDGE_COOKIE_SCOPE:-all}" in
+    all)
+        run_cookie_scope host-only '' || suite_status=$?
+        run_cookie_scope exact-host 'shop.example.test' || suite_status=$?
+        run_cookie_scope parent-domain '.example.test' || suite_status=$?
+        ;;
+    host-only)
+        run_cookie_scope host-only '' || suite_status=$?
+        ;;
+    exact-host)
+        run_cookie_scope exact-host 'shop.example.test' || suite_status=$?
+        ;;
+    parent-domain)
+        run_cookie_scope parent-domain '.example.test' || suite_status=$?
+        ;;
+    *)
+        echo "Unknown JWT_BRIDGE_COOKIE_SCOPE: $JWT_BRIDGE_COOKIE_SCOPE" >&2
+        exit 2
+        ;;
+esac
 
 run_validator_failure() {
     local scenario=$1
@@ -175,8 +216,12 @@ run_validator_failure() {
     python3 "$integration_dir/validator_configuration_tests.py"
 }
 
-run_validator_failure unconfigured '' reference
-run_validator_failure missing 'test/missing' reference
-run_validator_failure duplicate 'test/reference' duplicate
-run_validator_failure exception 'test/reference' throw
-run_validator_failure unexpected-return 'test/reference' unexpected-return
+if [[ "${JWT_BRIDGE_SKIP_VALIDATORS:-0}" != "1" ]]; then
+    run_validator_failure unconfigured '' reference || suite_status=$?
+    run_validator_failure missing 'test/missing' reference || suite_status=$?
+    run_validator_failure duplicate 'test/reference' duplicate || suite_status=$?
+    run_validator_failure exception 'test/reference' throw || suite_status=$?
+    run_validator_failure unexpected-return 'test/reference' unexpected-return || suite_status=$?
+fi
+
+exit "$suite_status"
