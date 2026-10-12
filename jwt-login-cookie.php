@@ -32,23 +32,71 @@ if (!function_exists('jwt_login_allowed_origins')) {
     }
 }
 
+/**
+ * Immutable proof returned by a trusted validator after it has verified the
+ * exact JWT supplied to the bridge. The initial mapping contract deliberately
+ * supports only a signed, positive WordPress user ID.
+ */
+if (!class_exists('JWT_Login_Verified_Identity')) {
+    final class JWT_Login_Verified_Identity {
+        private int $user_id;
+
+        public function __construct(int $user_id) {
+            if ($user_id < 1) {
+                throw new \InvalidArgumentException('A verified positive WordPress user ID is required.');
+            }
+            $this->user_id = $user_id;
+        }
+
+        public function user_id(): int {
+            return $this->user_id;
+        }
+    }
+}
+
+if (!function_exists('jwt_login_register_validator')) {
+    /**
+     * Register a trusted server-side validator.
+     *
+     * Extensions should register during the jwt_login_register_validators
+     * action. The callback receives the exact raw JWT and must return either a
+     * JWT_Login_Verified_Identity after cryptographic verification or WP_Error.
+     */
+    function jwt_login_register_validator(string $id, callable $validator): bool {
+        if (!empty($GLOBALS['jwt_login_validator_registry_locked']) || $id === '') {
+            return false;
+        }
+        if (!isset($GLOBALS['jwt_login_validator_registry'][$id])) {
+            $GLOBALS['jwt_login_validator_registry'][$id] = [];
+        }
+        $GLOBALS['jwt_login_validator_registry'][$id][] = $validator;
+        return true;
+    }
+}
+
+add_action('plugins_loaded', function (): void {
+    $GLOBALS['jwt_login_validator_registry'] = [];
+    do_action('jwt_login_register_validators');
+    $GLOBALS['jwt_login_validator_registry_locked'] = true;
+}, 20);
+
 // =========================================================
 // Helpers
 // =========================================================
 if (!function_exists('jwt_login_cookie_domain')) {
     /**
      * Return cookie domain to use.
-     * - Dev: exact HTTP_HOST (first-party on dev host)
-     * - Prod: override via JWT_LOGIN_COOKIE_DOMAIN if defined
+     * - Default: host-only cookie (empty domain)
+     * - Override via JWT_LOGIN_COOKIE_DOMAIN or WordPress COOKIE_DOMAIN
      */
     function jwt_login_cookie_domain(): string {
         if (defined('JWT_LOGIN_COOKIE_DOMAIN') && JWT_LOGIN_COOKIE_DOMAIN) {
-            return JWT_LOGIN_COOKIE_DOMAIN; 
+            return JWT_LOGIN_COOKIE_DOMAIN;
         }
         if (defined('COOKIE_DOMAIN') && COOKIE_DOMAIN) {
             return COOKIE_DOMAIN;
         }
-        return $_SERVER['HTTP_HOST'] ?? '';
+        return '';
     }
 }
 
@@ -64,10 +112,11 @@ if (!function_exists('jwt_login_cookie_set_auth_cookies')) {
         $now        = time();
         $expiration = $remember ? ($now + 14 * DAY_IN_SECONDS) : ($now + 2 * DAY_IN_SECONDS);
 
-        // Generate cookies like core
-        $auth_cookie         = wp_generate_auth_cookie($user_id, $expiration, 'auth');
-        $secure_auth_cookie  = wp_generate_auth_cookie($user_id, $expiration, 'secure_auth');
-        $logged_in_cookie    = wp_generate_auth_cookie($user_id, $expiration, 'logged_in');
+        // Generate cookies like core, sharing one revocable session token.
+        $session_token      = WP_Session_Tokens::get_instance($user_id)->create($expiration);
+        $auth_cookie        = wp_generate_auth_cookie($user_id, $expiration, 'auth', $session_token);
+        $secure_auth_cookie = wp_generate_auth_cookie($user_id, $expiration, 'secure_auth', $session_token);
+        $logged_in_cookie   = wp_generate_auth_cookie($user_id, $expiration, 'logged_in', $session_token);
 
         // Core paths
         $auth_path   = defined('ADMIN_COOKIE_PATH') ? ADMIN_COOKIE_PATH : '/wp-admin';
@@ -105,6 +154,45 @@ if (!function_exists('jwt_login_cookie_set_auth_cookies')) {
     }
 }
 
+if (!function_exists('jwt_login_cookie_clear_auth_cookies')) {
+    /**
+     * Clear bridge cookies when their explicit domain differs from core.
+     */
+    function jwt_login_cookie_clear_auth_cookies(): void {
+        if (!defined('JWT_LOGIN_COOKIE_DOMAIN') || !JWT_LOGIN_COOKIE_DOMAIN) {
+            return;
+        }
+
+        $domain      = jwt_login_cookie_domain();
+        $core_domain = defined('COOKIE_DOMAIN') ? (string) COOKIE_DOMAIN : '';
+        $normalized  = static function (string $value): string {
+            return ltrim(strtolower($value), '.');
+        };
+
+        // Core clears this scope itself when the configured domains match.
+        if ($normalized($domain) === $normalized($core_domain)) {
+            return;
+        }
+
+        $expiration  = time() - YEAR_IN_SECONDS;
+        $auth_path   = defined('ADMIN_COOKIE_PATH') ? ADMIN_COOKIE_PATH : '/wp-admin';
+        $logged_path = defined('COOKIEPATH') && COOKIEPATH ? COOKIEPATH : '/';
+        $options      = [
+            'expires'  => $expiration,
+            'domain'   => $domain,
+            'secure'   => true,
+            'httponly' => true,
+            'samesite' => 'None',
+        ];
+
+        setcookie(AUTH_COOKIE, '', array_merge($options, ['path' => $auth_path]));
+        setcookie(SECURE_AUTH_COOKIE, '', array_merge($options, ['path' => $auth_path]));
+        setcookie(LOGGED_IN_COOKIE, '', array_merge($options, ['path' => $logged_path]));
+    }
+}
+
+add_action('clear_auth_cookie', 'jwt_login_cookie_clear_auth_cookies');
+
 if (!function_exists('jwt_login_maybe_bootstrap_woo_session')) {
     /**
      * Best-effort Woo session kick; harmless if Woo is not present.
@@ -116,8 +204,203 @@ if (!function_exists('jwt_login_maybe_bootstrap_woo_session')) {
     }
 }
 
-// Prevent core from sending its own cookies (we control attributes)
-add_filter('send_auth_cookies', '__return_false');
+if (!function_exists('jwt_login_extract_token')) {
+    /**
+     * Read one JWT from an exact Bearer header or POST body, never the query.
+     *
+     * @return array{token:string,transport:string}|WP_Error
+     */
+    function jwt_login_extract_token(\WP_REST_Request $request) {
+        $query = $request->get_query_params();
+        if (array_key_exists('token', $query)) {
+            return new \WP_Error('invalid_request', 'JWT query parameters are not accepted.', ['status' => 400]);
+        }
+
+        $form = $request->get_body_params();
+        $json = $request->get_json_params();
+        $has_form_token = array_key_exists('token', $form);
+        $has_json_token = is_array($json) && array_key_exists('token', $json);
+        if ($has_form_token && $has_json_token) {
+            return new \WP_Error('invalid_request', 'Multiple token body values are not accepted.', ['status' => 400]);
+        }
+        $body_token = $has_form_token ? $form['token'] : ($has_json_token ? $json['token'] : null);
+
+        $auth_header = $request->get_header('authorization');
+        $has_auth_header = is_string($auth_header) && $auth_header !== '';
+        $header_token = null;
+        if ($has_auth_header) {
+            if (!preg_match('/\ABearer[ \t]+([^\s]+)\z/i', $auth_header, $matches)) {
+                return new \WP_Error('invalid_request', 'Authorization header must contain one Bearer token.', ['status' => 400]);
+            }
+            $header_token = $matches[1];
+        }
+
+        if ($header_token !== null && $body_token !== null) {
+            return new \WP_Error('invalid_request', 'Use either a Bearer token or a body token, not both.', ['status' => 400]);
+        }
+
+        $token = $header_token ?? $body_token;
+        if (!is_string($token) || $token === '') {
+            return new \WP_Error('unauthorized', 'Missing token', ['status' => 401]);
+        }
+        if (strlen($token) > 8192) {
+            return new \WP_Error('invalid_request', 'Token is too large.', ['status' => 400]);
+        }
+
+        return [
+            'token'     => $token,
+            'transport' => $header_token !== null ? 'bearer' : 'body',
+        ];
+    }
+}
+
+if (!function_exists('jwt_login_canonical_origin')) {
+    /**
+     * Return a canonical HTTP(S) origin, or an empty string when invalid.
+     * WordPress URLs may contain an installation path; request/configured
+     * origins may not.
+     */
+    function jwt_login_canonical_origin($value, bool $allow_path = false): string {
+        if (!is_string($value) || $value === '' || $value === 'null') {
+            return '';
+        }
+        if (preg_match('/[\x00-\x20\x7f,]/', $value)) {
+            return '';
+        }
+
+        $parts = wp_parse_url($value);
+        if (!is_array($parts) || empty($parts['scheme']) || empty($parts['host'])) {
+            return '';
+        }
+        if (isset($parts['user']) || isset($parts['pass']) || isset($parts['query']) || isset($parts['fragment'])) {
+            return '';
+        }
+        if (!$allow_path && isset($parts['path']) && $parts['path'] !== '') {
+            return '';
+        }
+
+        $scheme = strtolower((string) $parts['scheme']);
+        if ($scheme !== 'http' && $scheme !== 'https') {
+            return '';
+        }
+
+        $host = strtolower((string) $parts['host']);
+        if ($host === '') {
+            return '';
+        }
+        if (strpos($host, ':') !== false && $host[0] !== '[') {
+            $host = '[' . $host . ']';
+        }
+
+        $port = isset($parts['port']) ? (int) $parts['port'] : null;
+        if ($port !== null && ($port < 1 || $port > 65535)) {
+            return '';
+        }
+        $default_port = $scheme === 'https' ? 443 : 80;
+
+        return $scheme . '://' . $host . (($port !== null && $port !== $default_port) ? ':' . $port : '');
+    }
+}
+
+if (!function_exists('jwt_login_trusted_origins')) {
+    /**
+     * Return canonical frontend origins plus trusted WordPress URL origins.
+     */
+    function jwt_login_trusted_origins(): array {
+        $origins = [];
+        foreach (jwt_login_allowed_origins() as $allowed_origin) {
+            $origin = jwt_login_canonical_origin($allowed_origin);
+            if ($origin !== '') {
+                $origins[$origin] = true;
+            }
+        }
+        foreach ([home_url('/'), site_url('/')] as $wordpress_url) {
+            $origin = jwt_login_canonical_origin($wordpress_url, true);
+            if ($origin !== '') {
+                $origins[$origin] = true;
+            }
+        }
+
+        return array_keys($origins);
+    }
+}
+
+if (!function_exists('jwt_login_authorize_origin')) {
+    /**
+     * Body tokens are browser-capable and always require a trusted Origin.
+     * Bearer clients may omit Origin, but a supplied Origin must be trusted.
+     *
+     * @return true|WP_Error
+     */
+    function jwt_login_authorize_origin(\WP_REST_Request $request, string $transport) {
+        $raw_origin = $request->get_header('origin');
+        if (!is_string($raw_origin) || $raw_origin === '') {
+            return $transport === 'bearer'
+                ? true
+                : new \WP_Error('forbidden_origin', 'Request origin is not allowed.', ['status' => 403]);
+        }
+
+        $origin = jwt_login_canonical_origin($raw_origin);
+        if ($origin === '' || !in_array($origin, jwt_login_trusted_origins(), true)) {
+            return new \WP_Error('forbidden_origin', 'Request origin is not allowed.', ['status' => 403]);
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('jwt_login_validate_and_map_token')) {
+    /**
+     * Validate the exact JWT with the one explicitly selected validator and
+     * map its verified user ID to an existing WordPress user.
+     *
+     * @return WP_User|WP_Error
+     */
+    function jwt_login_validate_and_map_token(string $token) {
+        if (!defined('JWT_LOGIN_ACTIVE_VALIDATOR') || !is_string(JWT_LOGIN_ACTIVE_VALIDATOR) || JWT_LOGIN_ACTIVE_VALIDATOR === '') {
+            return new \WP_Error('validator_unavailable', 'JWT validator is unavailable.', ['status' => 503]);
+        }
+
+        $registered = $GLOBALS['jwt_login_validator_registry'][JWT_LOGIN_ACTIVE_VALIDATOR] ?? [];
+        if (count($registered) !== 1 || !is_callable($registered[0])) {
+            return new \WP_Error('validator_unavailable', 'JWT validator is unavailable.', ['status' => 503]);
+        }
+
+        try {
+            $identity = call_user_func($registered[0], $token);
+        } catch (\Throwable $error) {
+            return new \WP_Error('validator_failure', 'JWT validator failed.', ['status' => 503]);
+        }
+
+        if (is_wp_error($identity)) {
+            return new \WP_Error('unauthorized', 'Invalid token', ['status' => 401]);
+        }
+        if (!$identity instanceof JWT_Login_Verified_Identity) {
+            return new \WP_Error('validator_failure', 'JWT validator failed.', ['status' => 503]);
+        }
+
+        $user = get_user_by('id', $identity->user_id());
+        if (!$user instanceof \WP_User) {
+            return new \WP_Error('unauthorized', 'Invalid token', ['status' => 401]);
+        }
+
+        return $user;
+    }
+}
+
+if (!function_exists('jwt_login_browser_cookie_user_id')) {
+    /**
+     * Return only the user authenticated by the browser's logged-in cookie.
+     * This is used after JWT validation solely for identity-conflict policy.
+     */
+    function jwt_login_browser_cookie_user_id(): int {
+        if (!defined('LOGGED_IN_COOKIE') || empty($_COOKIE[LOGGED_IN_COOKIE]) || !is_string($_COOKIE[LOGGED_IN_COOKIE])) {
+            return 0;
+        }
+        $user_id = wp_validate_auth_cookie(wp_unslash($_COOKIE[LOGGED_IN_COOKIE]), 'logged_in');
+        return $user_id ? (int) $user_id : 0;
+    }
+}
 
 // =========================================================
 // REST: POST /wp-json/custom/v1/login_via_jwt
@@ -133,39 +416,37 @@ add_action('rest_api_init', function () {
         'methods'             => 'POST',
         'permission_callback' => '__return_true',
         'callback'            => function (\WP_REST_Request $request) {
-            // 1) Read token from Authorization header or body
-            $authHeader = $request->get_header('authorization');
-            $token = null;
-            if ($authHeader && preg_match('/Bearer\s+(\S+)/', $authHeader, $m)) {
-                $token = $m[1];
-            }
-            if (!$token) {
-                $token = $request->get_param('token');
-            }
-            if (!$token) {
-                return new \WP_Error('unauthorized', 'Missing token', ['status' => 401]);
+            // 1) Extract the exact JWT and identify its transport.
+            $token_input = jwt_login_extract_token($request);
+            if (is_wp_error($token_input)) {
+                return $token_input;
             }
 
-            // 2) Synthesize Authorization header if missing (for JWT plugins that read only headers)
-            if (!$authHeader) {
-                $fake = 'Bearer ' . $token;
-                $_SERVER['HTTP_AUTHORIZATION']          = $fake;
-                $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] = $fake; // Apache/FastCGI
+            // 2) Authorize browser-capable requests before JWT validation.
+            $origin_authorized = jwt_login_authorize_origin($request, $token_input['transport']);
+            if (is_wp_error($origin_authorized)) {
+                return $origin_authorized;
             }
 
-            // 3) Resolve current user from JWT plugin hooks
-            $user_id = apply_filters('determine_current_user', 0);
-            if (!$user_id) { $user_id = apply_filters('determine_current_user', 0, $token); }
-            if (!$user_id) {
-                return new \WP_Error('unauthorized', 'Invalid token', ['status' => 401]);
+            // 3) Independently validate and map the exact supplied JWT.
+            $user = jwt_login_validate_and_map_token($token_input['token']);
+            if (is_wp_error($user)) {
+                return $user;
+            }
+            $user_id = (int) $user->ID;
+
+            // 4) Never silently replace a different browser-cookie identity.
+            $cookie_user_id = jwt_login_browser_cookie_user_id();
+            if ($cookie_user_id && $cookie_user_id !== $user_id) {
+                return new \WP_Error('identity_conflict', 'JWT user conflicts with the browser session.', ['status' => 409]);
             }
 
-            // 4) Set current user + cookies and optionally initialize Woo session
+            // 5) Set current user + cookies and optionally initialize Woo session.
             wp_set_current_user($user_id);
             jwt_login_cookie_set_auth_cookies($user_id, true);
             jwt_login_maybe_bootstrap_woo_session();
 
-            // 5) Modes / redirects
+            // 6) Modes / redirects
             $mode          = $request->get_param('mode');          // 'popup' | 'bounce' | null
             $return_origin = $request->get_param('return_origin'); // for popup
             $return_to     = $request->get_param('return_to');     // for bounce

@@ -23,7 +23,7 @@ This plugin was originally developed for **AiroCollect**, a SaaS platform integr
 -  Optional iframe embedding (Content-Security-Policy / frame-ancestors)
 -  Supports multiple redirect modes: `popup`, `bounce`, `redirect`
 -  Enforces modern cookie attributes: `SameSite=None; Secure; HttpOnly`
--  Works with most JWT authentication plugins (no dependencies)
+-  Provider-agnostic validation contract with explicit server-side selection
 -  Compatible with WooCommerce session handling
 -  WordPress and WooCommerce API–safe (no core file modification)
 
@@ -77,7 +77,26 @@ Content-Type: application/json
 }
 ```
 
-The plugin validates the JWT (using your active JWT plugin), sets secure cookies, and optionally returns control via popup, bounce, or redirect.
+The plugin requires one explicitly configured server-side validator to cryptographically verify the exact JWT and return a `JWT_Login_Verified_Identity`. It then sets secure cookies and optionally returns control via popup, bounce, or redirect. Installed WordPress authentication plugins are not used automatically.
+
+Example registration from a trusted site plugin or adapter:
+
+```php
+define('JWT_LOGIN_ACTIVE_VALIDATOR', 'example/validator');
+
+add_action('jwt_login_register_validators', function (): void {
+    jwt_login_register_validator('example/validator', function (string $raw_jwt) {
+        // Verify signature, algorithm, time constraints and required claims here.
+        // Return WP_Error on every failure. Never merely decode the payload.
+        $verified_wordpress_user_id = example_verify_jwt($raw_jwt);
+        return is_wp_error($verified_wordpress_user_id)
+            ? $verified_wordpress_user_id
+            : new JWT_Login_Verified_Identity($verified_wordpress_user_id);
+    });
+});
+```
+
+This is an API example, not a built-in validator. Without exactly one registration matching `JWT_LOGIN_ACTIVE_VALIDATOR`, login fails closed.
 
 ### 2. Example (Angular frontend)
 
@@ -164,6 +183,8 @@ private async loginOnShopAndGoToPayTopLevel(opts: {
 | ----------------------------------------- | ---------------------------------------------------------- |
 | `jwt_login_allowed_origins()`             | List of allowed frontend origins (CORS whitelist)          |
 | `JWT_LOGIN_COOKIE_DOMAIN`                 | Optional cookie domain override                            |
+| `JWT_LOGIN_ACTIVE_VALIDATOR`              | Required server-side ID of the trusted JWT validator       |
+| `jwt_login_register_validator()`          | Registers a validator during `jwt_login_register_validators` |
 | `jwt_login_cookie_set_auth_cookies()`     | Custom cookie setter with `SameSite=None` enforced         |
 | `jwt_login_maybe_bootstrap_woo_session()` | Initializes WooCommerce session if available               |
 
@@ -186,7 +207,11 @@ private async loginOnShopAndGoToPayTopLevel(opts: {
 - Cookies are always `HttpOnly`, `Secure`, and `SameSite=None`.
 - Works with HTTPS only.
 
-To harden security further, ensure your JWT plugin verifies `iss`, `aud`, and token expiration properly.
+The selected validator is responsible for the cryptographic algorithm, key, temporal constraints and provider-specific required claims. Do not log raw JWTs or secrets.
+
+Body-token requests require an exact trusted HTTP(S) `Origin`. Bearer requests may omit `Origin` for server-to-server compatibility, but any supplied Origin must be trusted. Trusted origins are taken from `jwt_login_allowed_origins()` and the configured WordPress home/site URLs. CORS remains separate from this authorization check.
+
+Bounce destinations are still checked independently. The current bounce URL parser does not preserve an explicit port when constructing the destination origin; deployments using non-default bounce ports should treat that as a known compatibility limitation.
 
 ---
 
@@ -219,4 +244,3 @@ This plugin was created in real-world production conditions, under limited admin
 While situational by origin, its architecture is intentionally generic — anyone can adapt it for their own SSO or cross-domain login needs.
 
 > *“A small bridge between two worlds — WordPress and modern web apps.”*
-
