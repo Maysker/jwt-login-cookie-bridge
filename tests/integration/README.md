@@ -16,7 +16,7 @@ This environment exercises WordPress authentication, the bridge cookie helper, a
 - WooCommerce `11.2.0`: archive SHA-256 `66e91b45b057b64c73d4521111cea5bdc78c4c89de8fa2ca4b18b9422706d722`
 - MariaDB `11.4.5`: `mariadb@sha256:49117dcc565cf51aa57ac5fca59ab31213402ff0eae6ffc13c46a37b938f7e4b`
 - nginx `1.27.4-alpine`: `nginx@sha256:4ff102c5d78d254a6f0da062b3cf39eaf07f01eec0927fd21e219d0af8bc0591`
-- Test-only `firebase/php-jwt` `6.11.1`: source archive SHA-256 `1c46f1c7ec7e1a378966f19b8a828cd21d42d4967b7b789d0d432f536277cc3d`
+- Test-only `firebase/php-jwt` `7.2.1`: source archive SHA-256 `95dacc206254d7c6272d9b9aaf25862dbe26c769010e1de3725f7fe0c2a85e14`
 
 The Compose file pins both readable version tags and immutable image digests. The runner verifies the WooCommerce archive before installation.
 
@@ -56,6 +56,7 @@ The tests cover:
 - Browser-cookie/JWT identity conflicts, ambiguous transports, query tokens, checkout redirect, popup, and bounce responses.
 - Transport-aware Origin enforcement for Bearer, form, and JSON tokens, including canonical ports and rejection before JWT validation.
 - Mixed standard-login and Bridge-login sequences for the same and different users, including cookie scope, session-token association, resolved request identity, rejection without session creation, and logout expiration headers.
+- The optional RS256 example adapter with disposable RSA keys, including signature, algorithm, claim, identity, public-key, dependency, and configuration failures.
 
 Standard logout must both revoke the bridge-created session and leave no WordPress authentication cookies in curl's cookie jar in every scope scenario.
 
@@ -65,7 +66,7 @@ When core and Bridge cookie domains differ, successful login transitions keep on
 
 The regression suite covers the original exact-host failures as well as parent-domain transitions. Real Chromium and Firefox coverage remains necessary because same-name cookie storage and ordering are user-agent behavior.
 
-The test-only must-use plugin is copied into the disposable WordPress volume and protects its endpoints with a generated secret. It directly calls `jwt_login_cookie_set_auth_cookies()` only for Phase 1 lifecycle tests. Phase 2 cases issue and verify real HS256 JWTs with `firebase/php-jwt`; the random key remains in the temporary runtime directory and is removed at exit. This validator is test infrastructure, not a supported production provider.
+The test-only must-use plugin is copied into the disposable WordPress volume and protects its endpoints with a generated secret. It directly calls `jwt_login_cookie_set_auth_cookies()` only for Phase 1 lifecycle tests. Phase 2 cases issue and verify real HS256 JWTs with `firebase/php-jwt`; the random key remains in the temporary runtime directory and is removed at exit. The RS256 scenarios disable this must-use plugin's Firebase autoloader so the example adapter must load the genuine 7.x source from its own plugin-local `vendor/autoload.php`. This validator is test infrastructure, not a supported production provider.
 
 Not covered without additional configuration:
 

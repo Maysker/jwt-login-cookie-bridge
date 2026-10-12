@@ -98,6 +98,8 @@ add_action('jwt_login_register_validators', function (): void {
 
 This is an API example, not a built-in validator. Without exactly one registration matching `JWT_LOGIN_ACTIVE_VALIDATOR`, login fails closed.
 
+A complete optional RS256 adapter with its own Composer dependency and installation instructions is available in [`examples/rs256-validator`](examples/rs256-validator/README.md). It is not loaded or selected automatically and does not add a JWT dependency to the Bridge.
+
 ### 2. Example (Angular frontend)
 
 ```typescript

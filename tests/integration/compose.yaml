@@ -29,8 +29,14 @@ services:
       JWT_BRIDGE_TEST_JWT_ALGORITHM: ${JWT_BRIDGE_TEST_JWT_ALGORITHM:?required}
       JWT_BRIDGE_TEST_JWT_ISSUER: ${JWT_BRIDGE_TEST_JWT_ISSUER:?required}
       JWT_BRIDGE_TEST_VALIDATOR_MODE: ${JWT_BRIDGE_TEST_VALIDATOR_MODE:-reference}
+      JWT_BRIDGE_TEST_DISABLE_FIREBASE_AUTOLOAD: ${JWT_BRIDGE_TEST_DISABLE_FIREBASE_AUTOLOAD:-0}
       JWT_LOGIN_ACTIVE_VALIDATOR: ${JWT_LOGIN_ACTIVE_VALIDATOR-}
       JWT_LOGIN_COOKIE_DOMAIN: ${JWT_LOGIN_COOKIE_DOMAIN-}
+      JWT_LOGIN_RS256_PUBLIC_KEY_FILE: ${JWT_LOGIN_RS256_PUBLIC_KEY_FILE-}
+      JWT_LOGIN_RS256_ISSUER: ${JWT_LOGIN_RS256_ISSUER-}
+      JWT_LOGIN_RS256_AUDIENCE: ${JWT_LOGIN_RS256_AUDIENCE-}
+      JWT_LOGIN_RS256_IDENTITY_CLAIM: ${JWT_LOGIN_RS256_IDENTITY_CLAIM-}
+      JWT_LOGIN_RS256_MAXIMUM_LIFETIME: ${JWT_LOGIN_RS256_MAXIMUM_LIFETIME-}
       WORDPRESS_CONFIG_EXTRA: |
         if (isset($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
             $$_SERVER['HTTPS'] = 'on';
@@ -39,6 +45,21 @@ services:
         define('JWT_LOGIN_COOKIE_DOMAIN', (string) getenv('JWT_LOGIN_COOKIE_DOMAIN'));
         if (getenv('JWT_LOGIN_ACTIVE_VALIDATOR') !== false && getenv('JWT_LOGIN_ACTIVE_VALIDATOR') !== '') {
             define('JWT_LOGIN_ACTIVE_VALIDATOR', (string) getenv('JWT_LOGIN_ACTIVE_VALIDATOR'));
+        }
+        if (getenv('JWT_LOGIN_RS256_PUBLIC_KEY_FILE') !== false && getenv('JWT_LOGIN_RS256_PUBLIC_KEY_FILE') !== '') {
+            define('JWT_LOGIN_RS256_PUBLIC_KEY_FILE', (string) getenv('JWT_LOGIN_RS256_PUBLIC_KEY_FILE'));
+        }
+        if (getenv('JWT_LOGIN_RS256_ISSUER') !== false && getenv('JWT_LOGIN_RS256_ISSUER') !== '') {
+            define('JWT_LOGIN_RS256_ISSUER', (string) getenv('JWT_LOGIN_RS256_ISSUER'));
+        }
+        if (getenv('JWT_LOGIN_RS256_AUDIENCE') !== false && getenv('JWT_LOGIN_RS256_AUDIENCE') !== '') {
+            define('JWT_LOGIN_RS256_AUDIENCE', (string) getenv('JWT_LOGIN_RS256_AUDIENCE'));
+        }
+        if (getenv('JWT_LOGIN_RS256_IDENTITY_CLAIM') !== false && getenv('JWT_LOGIN_RS256_IDENTITY_CLAIM') !== '') {
+            define('JWT_LOGIN_RS256_IDENTITY_CLAIM', (string) getenv('JWT_LOGIN_RS256_IDENTITY_CLAIM'));
+        }
+        if (getenv('JWT_LOGIN_RS256_MAXIMUM_LIFETIME') !== false && getenv('JWT_LOGIN_RS256_MAXIMUM_LIFETIME') !== '') {
+            define('JWT_LOGIN_RS256_MAXIMUM_LIFETIME', (int) getenv('JWT_LOGIN_RS256_MAXIMUM_LIFETIME'));
         }
     volumes:
       - wordpress-data:/var/www/html

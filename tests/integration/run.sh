@@ -28,13 +28,28 @@ test_password=$(openssl rand -hex 24)
 test_secret=$(openssl rand -hex 32)
 jwt_test_key=$(openssl rand -hex 48)
 woocommerce_archive="$runtime_dir/woocommerce.11.2.0.zip"
-php_jwt_archive="$runtime_dir/php-jwt.6.11.1.zip"
+php_jwt_archive="$runtime_dir/php-jwt.7.2.1.zip"
+rs256_private_key="$runtime_dir/rs256-private.pem"
+rs256_other_private_key="$runtime_dir/rs256-other-private.pem"
+rs256_public_key="$runtime_dir/rs256-public.pem"
+rs256_ec_private_key="$runtime_dir/rs256-ec-private.pem"
+rs256_ec_public_key="$runtime_dir/rs256-ec-public.pem"
+rs256_invalid_key="$runtime_dir/rs256-invalid-public.pem"
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
     -keyout "$runtime_dir/key.pem" \
     -out "$runtime_dir/cert.pem" \
     -subj '/CN=shop.example.test' \
     -addext 'subjectAltName=DNS:shop.example.test' >/dev/null 2>&1
+
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$rs256_private_key" >/dev/null 2>&1
+openssl pkey -in "$rs256_private_key" -pubout -out "$rs256_public_key"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$rs256_other_private_key" >/dev/null 2>&1
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$rs256_ec_private_key" >/dev/null 2>&1
+openssl pkey -in "$rs256_ec_private_key" -pubout -out "$rs256_ec_public_key"
+printf '%s\n' 'not a public key' >"$rs256_invalid_key"
+chmod 600 "$rs256_private_key" "$rs256_other_private_key" "$rs256_ec_private_key"
+chmod 644 "$rs256_public_key" "$rs256_ec_public_key" "$rs256_invalid_key"
 
 curl --fail --silent --show-error --location \
     'https://downloads.wordpress.org/plugin/woocommerce.11.2.0.zip' \
@@ -45,10 +60,10 @@ printf '%s  %s\n' \
     "$woocommerce_archive" | sha256sum --check --status
 
 curl --fail --silent --show-error --location \
-    'https://github.com/firebase/php-jwt/archive/refs/tags/v6.11.1.zip' \
+    'https://github.com/googleapis/php-jwt/archive/refs/tags/v7.2.1.zip' \
     --output "$php_jwt_archive"
 printf '%s  %s\n' \
-    '1c46f1c7ec7e1a378966f19b8a828cd21d42d4967b7b789d0d432f536277cc3d' \
+    '95dacc206254d7c6272d9b9aaf25862dbe26c769010e1de3725f7fe0c2a85e14' \
     "$php_jwt_archive" | sha256sum --check --status
 unzip -q "$php_jwt_archive" -d "$runtime_dir"
 
@@ -102,12 +117,18 @@ wait_for_wordpress
 
 "${compose[@]}" exec --no-TTY wordpress sh -eu -c '
     mkdir -p /var/www/html/wp-content/plugins/jwt-login-cookie
+    mkdir -p /var/www/html/wp-content/plugins/jwt-login-rs256-validator/vendor/firebase/php-jwt
+    mkdir -p /var/www/html/wp-content/plugins/jwt-login-rs256-validator-missing
     mkdir -p /var/www/html/wp-content/mu-plugins
     mkdir -p /var/www/html/wp-content/mu-plugins/jwt-bridge-test-vendor/php-jwt
     cp /workspace/jwt-login-cookie.php /var/www/html/wp-content/plugins/jwt-login-cookie/jwt-login-cookie.php
+    cp -R /workspace/examples/rs256-validator/. /var/www/html/wp-content/plugins/jwt-login-rs256-validator/
+    cp /workspace/examples/rs256-validator/jwt-login-rs256-validator.php /var/www/html/wp-content/plugins/jwt-login-rs256-validator-missing/jwt-login-rs256-validator.php
+    cp /workspace/tests/integration/fixtures/rs256-vendor-autoload.php /var/www/html/wp-content/plugins/jwt-login-rs256-validator/vendor/autoload.php
+    cp -R /integration-runtime/php-jwt-7.2.1/src /var/www/html/wp-content/plugins/jwt-login-rs256-validator/vendor/firebase/php-jwt/src
     cp /workspace/tests/integration/fixtures/jwt-bridge-test-driver.php /var/www/html/wp-content/mu-plugins/jwt-bridge-test-driver.php
-    cp -R /integration-runtime/php-jwt-6.11.1/src /var/www/html/wp-content/mu-plugins/jwt-bridge-test-vendor/php-jwt/src
-    chown -R www-data:www-data /var/www/html/wp-content/plugins/jwt-login-cookie /var/www/html/wp-content/mu-plugins
+    cp -R /integration-runtime/php-jwt-7.2.1/src /var/www/html/wp-content/mu-plugins/jwt-bridge-test-vendor/php-jwt/src
+    chown -R www-data:www-data /var/www/html/wp-content/plugins/jwt-login-cookie /var/www/html/wp-content/plugins/jwt-login-rs256-validator /var/www/html/wp-content/plugins/jwt-login-rs256-validator-missing /var/www/html/wp-content/mu-plugins
 '
 
 "${compose[@]}" run --rm cli wp plugin activate jwt-login-cookie
@@ -222,6 +243,50 @@ if [[ "${JWT_BRIDGE_SKIP_VALIDATORS:-0}" != "1" ]]; then
     run_validator_failure duplicate 'test/reference' duplicate || suite_status=$?
     run_validator_failure exception 'test/reference' throw || suite_status=$?
     run_validator_failure unexpected-return 'test/reference' unexpected-return || suite_status=$?
+fi
+
+run_rs256_scenario() {
+    local scenario=$1
+    local public_key_file=$2
+    local audience=$3
+
+    echo "RS256 example validator scenario: $scenario"
+    JWT_LOGIN_ACTIVE_VALIDATOR='example/rs256' \
+    JWT_LOGIN_COOKIE_DOMAIN='' \
+    JWT_LOGIN_RS256_PUBLIC_KEY_FILE="$public_key_file" \
+    JWT_LOGIN_RS256_ISSUER='https://rs256-issuer.example.test' \
+    JWT_LOGIN_RS256_AUDIENCE="$audience" \
+    JWT_LOGIN_RS256_IDENTITY_CLAIM='wp_user_id' \
+    JWT_LOGIN_RS256_MAXIMUM_LIFETIME='300' \
+    JWT_BRIDGE_TEST_DISABLE_FIREBASE_AUTOLOAD='1' \
+    "${compose[@]}" up --detach --no-deps --force-recreate wordpress
+    wait_for_wordpress
+
+    PYTHONDONTWRITEBYTECODE=1 \
+    JWT_BRIDGE_BASE_URL="$base_url" \
+    JWT_BRIDGE_CURL_RESOLVE="$curl_resolve" \
+    JWT_BRIDGE_TEST_SECRET="$test_secret" \
+    JWT_BRIDGE_TEST_USER_ID="$test_user_id" \
+    JWT_BRIDGE_RS256_PRIVATE_KEY="$rs256_private_key" \
+    JWT_BRIDGE_RS256_OTHER_PRIVATE_KEY="$rs256_other_private_key" \
+    JWT_BRIDGE_RS256_ISSUER='https://rs256-issuer.example.test' \
+    JWT_BRIDGE_RS256_AUDIENCE='wordpress-store' \
+    JWT_BRIDGE_RS256_IDENTITY_CLAIM='wp_user_id' \
+    JWT_BRIDGE_RS256_TEST_MODE="$scenario" \
+    python3 "$integration_dir/rs256_validator_tests.py"
+}
+
+if [[ "${JWT_BRIDGE_SKIP_RS256:-0}" != "1" ]]; then
+    "${compose[@]}" run --rm cli wp plugin activate jwt-login-rs256-validator
+
+    run_rs256_scenario normal '/integration-runtime/rs256-public.pem' 'wordpress-store' || suite_status=$?
+    run_rs256_scenario invalid-key '/integration-runtime/rs256-invalid-public.pem' 'wordpress-store' || suite_status=$?
+    run_rs256_scenario wrong-key-type '/integration-runtime/rs256-ec-public.pem' 'wordpress-store' || suite_status=$?
+    run_rs256_scenario missing-config '/integration-runtime/rs256-public.pem' '' || suite_status=$?
+
+    "${compose[@]}" run --rm cli wp plugin deactivate jwt-login-rs256-validator
+    "${compose[@]}" run --rm cli wp plugin activate jwt-login-rs256-validator-missing/jwt-login-rs256-validator.php
+    run_rs256_scenario missing-dependency '/integration-runtime/rs256-public.pem' 'wordpress-store' || suite_status=$?
 fi
 
 exit "$suite_status"

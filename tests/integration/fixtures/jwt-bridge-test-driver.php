@@ -7,16 +7,18 @@
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 
-spl_autoload_register(function (string $class): void {
-    $prefix = 'Firebase\\JWT\\';
-    if (strpos($class, $prefix) !== 0) {
-        return;
-    }
-    $file = __DIR__ . '/jwt-bridge-test-vendor/php-jwt/src/' . substr($class, strlen($prefix)) . '.php';
-    if (is_readable($file)) {
-        require_once $file;
-    }
-});
+if (getenv('JWT_BRIDGE_TEST_DISABLE_FIREBASE_AUTOLOAD') !== '1') {
+    spl_autoload_register(function (string $class): void {
+        $prefix = 'Firebase\\JWT\\';
+        if (strpos($class, $prefix) !== 0) {
+            return;
+        }
+        $file = __DIR__ . '/jwt-bridge-test-vendor/php-jwt/src/' . substr($class, strlen($prefix)) . '.php';
+        if (is_readable($file)) {
+            require_once $file;
+        }
+    });
+}
 
 function jwt_bridge_test_authorized(WP_REST_Request $request): bool {
     $expected = getenv('JWT_BRIDGE_TEST_SECRET');

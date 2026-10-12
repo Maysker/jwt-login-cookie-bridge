@@ -1,0 +1,16 @@
+{
+    "name": "example/jwt-login-rs256-validator",
+    "description": "Optional provider-neutral RS256 validator for JWT Login Cookie Bridge",
+    "type": "wordpress-plugin",
+    "license": "GPL-3.0-or-later",
+    "require": {
+        "php": ">=8.0",
+        "ext-openssl": "*",
+        "firebase/php-jwt": "^7.2.1"
+    },
+    "config": {
+        "allow-plugins": {},
+        "optimize-autoloader": true,
+        "sort-packages": true
+    }
+}
