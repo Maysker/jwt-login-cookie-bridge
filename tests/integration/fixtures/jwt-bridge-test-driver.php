@@ -187,3 +187,21 @@ add_filter('rest_pre_serve_request', function ($served, $result, WP_REST_Request
 
     return $served;
 }, 15, 3);
+
+add_action('send_headers', function (): void {
+    $fixture = isset($_GET['jwt_bridge_frame_fixture'])
+        ? sanitize_key(wp_unslash($_GET['jwt_bridge_frame_fixture']))
+        : '';
+
+    if ($fixture === 'existing-csp') {
+        header("Content-Security-Policy: default-src 'self'; script-src 'self'; report-uri /csp-report", false);
+    } elseif ($fixture === 'restrictive-csp') {
+        header("Content-Security-Policy: default-src 'self'; frame-ancestors 'none'; report-to csp-endpoint", false);
+    } elseif ($fixture === 'xfo') {
+        header('X-Frame-Options: DENY', true);
+    }
+}, 900);
+
+add_action('jwt_login_frame_policy_conflict', function (string $reason): void {
+    header('X-JWT-Bridge-Test-Frame-Conflict: ' . $reason, false);
+});

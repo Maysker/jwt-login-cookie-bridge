@@ -176,9 +176,72 @@ run_cors_isolation() {
     python3 "$integration_dir/cors_isolation_tests.py"
 }
 
-run_cors_isolation
+if [[ "${JWT_BRIDGE_SKIP_CORS:-0}" != "1" ]]; then
+    run_cors_isolation
+fi
 
 if [[ "${JWT_BRIDGE_ONLY_CORS:-0}" == "1" ]]; then
+    exit 0
+fi
+
+run_frame_policy_isolation() {
+    local baseline_file="$runtime_dir/frame-policy-baseline.json"
+    local original_checkout_id
+    local custom_checkout_id
+    local ordinary_page_id
+    local unrelated_page_id
+    local order_pay_url
+    local order_pay_path
+
+    original_checkout_id=$("${compose[@]}" run --rm --quiet cli wp option get woocommerce_checkout_page_id)
+    custom_checkout_id=$("${compose[@]}" run --rm --quiet cli wp post create \
+        --post_type=page --post_status=publish --post_title='Embedded Checkout' \
+        --post_name=embedded-checkout --post_content='[woocommerce_checkout]' --porcelain)
+    ordinary_page_id=$("${compose[@]}" run --rm --quiet cli wp post create \
+        --post_type=page --post_status=publish --post_title='Frame Ordinary' \
+        --post_name=frame-ordinary --porcelain)
+    unrelated_page_id=$("${compose[@]}" run --rm --quiet cli wp post create \
+        --post_type=page --post_status=publish --post_title='Checkout Unrelated' \
+        --post_name=frame-unrelated --post_parent="$original_checkout_id" --porcelain)
+    "${compose[@]}" run --rm cli wp option update woocommerce_checkout_page_id "$custom_checkout_id"
+    order_pay_url=$("${compose[@]}" run --rm --quiet cli wp eval \
+        '$order = wc_create_order(); $order->set_status("pending"); $order->save(); echo $order->get_checkout_payment_url();')
+    order_pay_path=$(python3 -c 'import sys,urllib.parse; u=urllib.parse.urlsplit(sys.argv[1]); print(u.path + (("?" + u.query) if u.query else ""))' "$order_pay_url")
+
+    echo 'Frame policy isolation baseline: Bridge disabled'
+    "${compose[@]}" run --rm cli wp plugin deactivate jwt-login-cookie
+    PYTHONDONTWRITEBYTECODE=1 \
+    JWT_BRIDGE_BASE_URL="$base_url" \
+    JWT_BRIDGE_CURL_RESOLVE="$curl_resolve" \
+    JWT_BRIDGE_FRAME_MODE=capture \
+    JWT_BRIDGE_FRAME_BASELINE_FILE="$baseline_file" \
+    JWT_BRIDGE_FRAME_CHECKOUT_PATH='/embedded-checkout/' \
+    JWT_BRIDGE_FRAME_ORDER_PAY_PATH="$order_pay_path" \
+    JWT_BRIDGE_FRAME_ORDINARY_PATH='/frame-ordinary/' \
+    JWT_BRIDGE_FRAME_UNRELATED_CHECKOUT_PATH='/checkout/frame-unrelated/' \
+    python3 "$integration_dir/frame_policy_tests.py"
+
+    "${compose[@]}" run --rm cli wp plugin activate jwt-login-cookie
+    echo 'Frame policy isolation verification: Bridge enabled'
+    PYTHONDONTWRITEBYTECODE=1 \
+    JWT_BRIDGE_BASE_URL="$base_url" \
+    JWT_BRIDGE_CURL_RESOLVE="$curl_resolve" \
+    JWT_BRIDGE_FRAME_MODE=verify \
+    JWT_BRIDGE_FRAME_BASELINE_FILE="$baseline_file" \
+    JWT_BRIDGE_FRAME_CHECKOUT_PATH='/embedded-checkout/' \
+    JWT_BRIDGE_FRAME_ORDER_PAY_PATH="$order_pay_path" \
+    JWT_BRIDGE_FRAME_ORDINARY_PATH='/frame-ordinary/' \
+    JWT_BRIDGE_FRAME_UNRELATED_CHECKOUT_PATH='/checkout/frame-unrelated/' \
+    python3 "$integration_dir/frame_policy_tests.py"
+
+    "${compose[@]}" run --rm cli wp option update woocommerce_checkout_page_id "$original_checkout_id"
+}
+
+if [[ "${JWT_BRIDGE_SKIP_FRAME_POLICY:-0}" != "1" ]]; then
+    run_frame_policy_isolation
+fi
+
+if [[ "${JWT_BRIDGE_ONLY_FRAME_POLICY:-0}" == "1" ]]; then
     exit 0
 fi
 

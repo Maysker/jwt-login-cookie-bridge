@@ -717,27 +717,107 @@ add_filter('rest_pre_serve_request', function ($served, $result, \WP_REST_Reques
 }, 20, 3);
 
 // =========================================================
-// EMBED EXCEPTION for Woo checkout (iframe from frontend.example.com)
+// Scoped frame policy for verified WooCommerce checkout pages
 // =========================================================
-add_action('send_headers', function () {
-    $uri = $_SERVER['REQUEST_URI'] ?? '';
-    if (preg_match('#^/checkout/(?:order-pay/)?#', $uri)) {
-        // Remove X-Frame-Options (added by WP core or security plugins)
-        header_remove('X-Frame-Options');
-        header('X-Frame-Options: ', true);
+if (!function_exists('jwt_login_is_embeddable_checkout_request')) {
+    function jwt_login_is_embeddable_checkout_request(): bool {
+        if (is_admin()
+            || (function_exists('wp_doing_ajax') && wp_doing_ajax())
+            || (defined('REST_REQUEST') && REST_REQUEST)
+            || !function_exists('is_checkout')
+            || !is_checkout()
+        ) {
+            return false;
+        }
 
-        // Build CSP frame-ancestors from allowed origins
-        $origins = array_filter(jwt_login_allowed_origins(), function ($o) {
-            return is_string($o) && preg_match('#^https?://#', $o);
-        });
-        $origins = array_map(function ($o) { return rtrim($o, '/'); }, $origins);
-        if (!$origins) { $origins = ['https://frontend.example.com']; }
+        // The checkout page and order-pay endpoint are supported. Other
+        // checkout endpoints retain their native framing policy.
+        if (function_exists('is_wc_endpoint_url') && is_wc_endpoint_url()) {
+            return is_wc_endpoint_url('order-pay');
+        }
 
-        // Replace any existing CSP to avoid conflicting policies
-        header_remove('Content-Security-Policy');
-        header("Content-Security-Policy: frame-ancestors 'self' " . implode(' ', $origins), true);
+        return true;
     }
-}, 1000);
+}
 
-// Core sometimes adds X-Frame-Options via this hook on frontend
-remove_action('template_redirect', 'wp_frame_options_header');
+if (!function_exists('jwt_login_frame_ancestor_origins')) {
+    /**
+     * Return strictly canonical configured origins, or null on invalid config.
+     */
+    function jwt_login_frame_ancestor_origins(): ?array {
+        $origins = [];
+        foreach (jwt_login_allowed_origins() as $configured_origin) {
+            $origin = jwt_login_canonical_origin($configured_origin);
+            if ($origin === '') {
+                return null;
+            }
+            $origins[$origin] = true;
+        }
+
+        return $origins ? array_keys($origins) : null;
+    }
+}
+
+if (!function_exists('jwt_login_response_header_values')) {
+    /**
+     * Return current PHP response-header values without altering them.
+     */
+    function jwt_login_response_header_values(string $name): array {
+        $values = [];
+        $prefix = strtolower($name) . ':';
+        foreach (headers_list() as $header) {
+            if (strpos(strtolower($header), $prefix) === 0) {
+                $values[] = trim(substr($header, strlen($prefix)));
+            }
+        }
+
+        return $values;
+    }
+}
+
+if (!function_exists('jwt_login_csp_has_frame_ancestors')) {
+    function jwt_login_csp_has_frame_ancestors(array $policies): bool {
+        foreach ($policies as $policy) {
+            foreach (explode(';', $policy) as $directive) {
+                $parts = preg_split('/\s+/', trim($directive), 2);
+                if (is_array($parts) && isset($parts[0]) && strtolower($parts[0]) === 'frame-ancestors') {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+}
+
+add_action('template_redirect', function (): void {
+    if (!jwt_login_is_embeddable_checkout_request()) {
+        return;
+    }
+
+    $origins = jwt_login_frame_ancestor_origins();
+    if ($origins === null) {
+        do_action('jwt_login_frame_policy_conflict', 'invalid_frame_ancestor_origin');
+        return;
+    }
+
+    // WooCommerce's default callback runs later on template_redirect and adds
+    // SAMEORIGIN headers. Suppress it only for this verified checkout response;
+    // any policy already emitted by another component remains authoritative.
+    remove_action('template_redirect', 'wc_send_frame_options_header');
+
+    if (jwt_login_response_header_values('X-Frame-Options')) {
+        do_action('jwt_login_frame_policy_conflict', 'existing_x_frame_options');
+        return;
+    }
+
+    $policies = jwt_login_response_header_values('Content-Security-Policy');
+    if (jwt_login_csp_has_frame_ancestors($policies)) {
+        do_action('jwt_login_frame_policy_conflict', 'existing_content_security_policy_frame_ancestors');
+        return;
+    }
+
+    // A separate policy preserves all existing CSP directives. Multiple CSP
+    // headers are enforced together, so this can only narrow framing access.
+    header("Content-Security-Policy: frame-ancestors 'self' " . implode(' ', $origins), false);
+}, 0);

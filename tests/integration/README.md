@@ -58,6 +58,7 @@ The tests cover:
 - Mixed standard-login and Bridge-login sequences for the same and different users, including cookie scope, session-token association, resolved request identity, rejection without session creation, and logout expiration headers.
 - The optional RS256 example adapter with disposable RSA keys, including signature, algorithm, claim, identity, public-key, dependency, and configuration failures.
 - Bridge-only CORS and OPTIONS handling, compared with native WordPress behavior on unrelated core and WooCommerce REST routes while the Bridge is disabled.
+- Checkout frame-policy isolation for custom checkout slugs and order-pay, including preservation of unrelated CSP directives and externally managed restrictive policies.
 
 Standard logout must both revoke the bridge-created session and leave no WordPress authentication cookies in curl's cookie jar in every scope scenario.
 
@@ -74,4 +75,4 @@ Not covered without additional configuration:
 - Production proxy/header behavior and production cookie-domain overrides.
 - Browser-specific Origin emission, third-party-cookie, popup, and iframe behavior.
 - Browser-specific ordering of same-name cookies at overlapping host-only and Domain scopes; curl's cookie jar is useful regression coverage but is not a substitute for Chromium and Firefox.
-- A completed WooCommerce payment. The bridge checkout redirect, popup, and bounce responses are covered, but real-browser behavior, CORS, CSP, and login-CSRF/Origin enforcement are not.
+- A completed WooCommerce payment. The bridge checkout redirect, popup, bounce, CORS, Origin enforcement, and HTTP frame-policy headers are covered, but real-browser checkout and iframe enforcement are not.

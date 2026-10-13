@@ -164,6 +164,28 @@ class PhaseOneRegressionTests(unittest.TestCase):
         self.assertNotIn("remove_filter('rest_pre_serve_request', 'rest_send_cors_headers')", self.source)
         self.assertNotIn("strpos($uri, '/wp-json/')", self.source)
 
+    def test_frame_policy_is_scoped_to_verified_woocommerce_checkout(self):
+        route_check = self.function_source("jwt_login_is_embeddable_checkout_request")
+        self.assertIn("is_checkout()", route_check)
+        self.assertIn("is_wc_endpoint_url('order-pay')", route_check)
+        self.assertNotIn("REQUEST_URI", route_check)
+
+        origins = self.function_source("jwt_login_frame_ancestor_origins")
+        self.assertIn("jwt_login_canonical_origin($configured_origin)", origins)
+        self.assertNotIn("HTTP_HOST", origins)
+
+        self.assertIn(
+            "remove_action('template_redirect', 'wc_send_frame_options_header')",
+            self.source,
+        )
+        self.assertNotIn(
+            "remove_action('template_redirect', 'wp_frame_options_header')",
+            self.source,
+        )
+        self.assertNotIn("header_remove('Content-Security-Policy')", self.source)
+        self.assertNotIn("header_remove('X-Frame-Options')", self.source)
+        self.assertIn("jwt_login_frame_policy_conflict", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

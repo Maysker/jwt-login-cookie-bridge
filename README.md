@@ -49,6 +49,12 @@ This plugin was originally developed for **AiroCollect**, a SaaS platform integr
 
 4. **Adjust your CORS whitelist** in `jwt_login_allowed_origins()` — include all frontend domains that should be allowed to log in.
 
+### Iframe checkout policy
+
+The optional iframe exception applies only when WooCommerce identifies the current response as its configured checkout page or `order-pay` endpoint. Custom checkout slugs and WordPress subdirectory installations therefore do not require URI-prefix configuration. Every configured frame ancestor must be one exact HTTP(S) origin; wildcards, paths, malformed origins, and fallback origins are not accepted.
+
+The plugin appends a separate `frame-ancestors` policy and never deletes an existing CSP. If another plugin, the theme, WooCommerce, or PHP has already emitted `X-Frame-Options` or a CSP `frame-ancestors` directive, that policy remains authoritative and the plugin fires `jwt_login_frame_policy_conflict` with a sanitized reason. An administrator must explicitly update or remove the conflicting policy at its source before cross-origin framing will work. Headers added later by a reverse proxy or CDN cannot be changed or reliably detected by this plugin and must be configured there.
+
 ---
 
 ## 🔑 Usage
