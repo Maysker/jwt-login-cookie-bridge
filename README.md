@@ -219,7 +219,7 @@ The selected validator is responsible for the cryptographic algorithm, key, temp
 
 Body-token requests require an exact trusted HTTP(S) `Origin`. Bearer requests may omit `Origin` for server-to-server compatibility, but any supplied Origin must be trusted. Trusted origins are taken from `jwt_login_allowed_origins()` and the configured WordPress home/site URLs. CORS remains separate from this authorization check.
 
-Bounce destinations are still checked independently. The current bounce URL parser does not preserve an explicit port when constructing the destination origin; deployments using non-default bounce ports should treat that as a known compatibility limitation.
+Bounce and WordPress redirect destinations are checked independently using their complete canonical origins, including scheme, host, and effective port. Explicit default ports are equivalent to omitted defaults; non-default ports must be explicitly trusted.
 
 ---
 

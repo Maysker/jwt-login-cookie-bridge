@@ -7,6 +7,22 @@
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 
+if (isset($_GET['jwt_bridge_destination_fixture'])
+    && $_GET['jwt_bridge_destination_fixture'] === 'ports'
+    && !function_exists('jwt_login_allowed_origins')
+) {
+    function jwt_login_allowed_origins(): array {
+        return [
+            'https://frontend.example.com',
+            'https://dev.example.com',
+            'https://localhost:4200',
+            'http://localhost:4200',
+            'http://http-frontend.example.com',
+            'https://ports.example.com:4443',
+        ];
+    }
+}
+
 if (getenv('JWT_BRIDGE_TEST_DISABLE_FIREBASE_AUTOLOAD') !== '1') {
     spl_autoload_register(function (string $class): void {
         $prefix = 'Firebase\\JWT\\';

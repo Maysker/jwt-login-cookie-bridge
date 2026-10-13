@@ -33,6 +33,18 @@ class PhaseOneRegressionTests(unittest.TestCase):
         self.assertIn("$request->get_param('redirect')", self.source)
         self.assertIn("wp_safe_redirect($redirect)", self.source)
 
+    def test_navigation_destinations_use_complete_canonical_origins(self):
+        destination = self.function_source("jwt_login_destination_origin")
+        self.assertIn("jwt_login_canonical_origin($origin)", destination)
+        self.assertIn("isset($parts['user'])", destination)
+        self.assertIn("isset($parts['pass'])", destination)
+
+        redirect = self.source[self.source.index("// --- BOUNCE ---"):self.source.index("return ['success' => true")]
+        self.assertIn("jwt_login_allowed_frontend_origins()", redirect)
+        self.assertIn("jwt_login_wordpress_origins()", redirect)
+        self.assertNotIn("HTTP_HOST", redirect)
+        self.assertNotIn("parse_url($return_to", redirect)
+
     def test_cookie_attributes_and_paths_are_preserved(self):
         setter = self.function_source("jwt_login_cookie_set_auth_cookies")
         self.assertIn("ADMIN_COOKIE_PATH", setter)

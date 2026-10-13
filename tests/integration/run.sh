@@ -245,6 +245,24 @@ if [[ "${JWT_BRIDGE_ONLY_FRAME_POLICY:-0}" == "1" ]]; then
     exit 0
 fi
 
+run_destination_validation() {
+    echo 'Bounce and redirect destination validation'
+    PYTHONDONTWRITEBYTECODE=1 \
+    JWT_BRIDGE_BASE_URL="$base_url" \
+    JWT_BRIDGE_CURL_RESOLVE="$curl_resolve" \
+    JWT_BRIDGE_TEST_SECRET="$test_secret" \
+    JWT_BRIDGE_TEST_USER_ID="$test_user_id" \
+    python3 "$integration_dir/destination_validation_tests.py"
+}
+
+if [[ "${JWT_BRIDGE_SKIP_DESTINATIONS:-0}" != "1" ]]; then
+    run_destination_validation
+fi
+
+if [[ "${JWT_BRIDGE_ONLY_DESTINATIONS:-0}" == "1" ]]; then
+    exit 0
+fi
+
 run_cookie_scope() {
     local scenario=$1
     local cookie_domain=$2

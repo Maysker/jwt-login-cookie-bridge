@@ -650,14 +650,13 @@ class WordPressCookieIntegrationTests(unittest.TestCase):
     def test_10_checkout_redirect_is_preserved(self):
         client = CurlClient(self.directory, "checkout-redirect.txt")
         token = self.issue_token()
-        redirect = "https://shop.example.test/checkout/order-pay/123/?key=non-secret-test-key"
+        redirect = BASE_URL + "/checkout/order-pay/123/?key=non-secret-test-key"
         status, headers, _ = client.request(
             "/wp-json/custom/v1/login_via_jwt",
             method="POST",
             data=urlencode({"token": token, "redirect": redirect}),
             headers={
                 "Content-Type": "application/x-www-form-urlencoded",
-                "Host": "shop.example.test",
                 "Origin": BASE_URL,
             },
         )

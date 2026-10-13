@@ -414,6 +414,79 @@ if (!function_exists('jwt_login_trusted_origins')) {
     }
 }
 
+if (!function_exists('jwt_login_destination_origin')) {
+    /**
+     * Return the canonical origin of an absolute HTTP(S) destination URL.
+     * Paths, queries, and fragments are allowed; credentials and ambiguous
+     * backslash syntax are not.
+     */
+    function jwt_login_destination_origin($value): string {
+        if (!is_string($value)
+            || $value === ''
+            || preg_match('/[\x00-\x20\x7f\\\\]/', $value)
+        ) {
+            return '';
+        }
+
+        $parts = wp_parse_url($value);
+        if (!is_array($parts)
+            || empty($parts['scheme'])
+            || empty($parts['host'])
+            || isset($parts['user'])
+            || isset($parts['pass'])
+        ) {
+            return '';
+        }
+
+        $host = (string) $parts['host'];
+        if (strpos($host, ':') !== false && $host[0] !== '[') {
+            $host = '[' . $host . ']';
+        }
+        $origin = (string) $parts['scheme'] . '://' . $host;
+        if (isset($parts['port'])) {
+            $origin .= ':' . (string) $parts['port'];
+        }
+
+        return jwt_login_canonical_origin($origin);
+    }
+}
+
+if (!function_exists('jwt_login_allowed_frontend_origins')) {
+    function jwt_login_allowed_frontend_origins(): array {
+        $origins = [];
+        foreach (jwt_login_allowed_origins() as $configured_origin) {
+            $origin = jwt_login_canonical_origin($configured_origin);
+            if ($origin !== '') {
+                $origins[$origin] = true;
+            }
+        }
+
+        return array_keys($origins);
+    }
+}
+
+if (!function_exists('jwt_login_wordpress_origins')) {
+    function jwt_login_wordpress_origins(): array {
+        $origins = [];
+        foreach ([home_url('/'), site_url('/')] as $wordpress_url) {
+            $origin = jwt_login_canonical_origin($wordpress_url, true);
+            if ($origin !== '') {
+                $origins[$origin] = true;
+            }
+        }
+
+        return array_keys($origins);
+    }
+}
+
+if (!function_exists('jwt_login_destination_is_allowed')) {
+    function jwt_login_destination_is_allowed($destination, array $trusted_origins): bool {
+        $origin = jwt_login_destination_origin($destination);
+
+        return $origin !== '' && in_array($origin, $trusted_origins, true);
+    }
+}
+
 if (!function_exists('jwt_login_authorize_origin')) {
     /**
      * Body tokens are browser-capable and always require a trusted Origin.
@@ -565,11 +638,7 @@ add_action('rest_api_init', function () {
 
             // --- BOUNCE ---
             if ($mode === 'bounce' && $return_to) {
-                $allowed = jwt_login_allowed_origins();
-                $host = parse_url($return_to, PHP_URL_HOST);
-                $scheme = parse_url($return_to, PHP_URL_SCHEME);
-                $origin = ($scheme && $host) ? ($scheme . '://' . $host) : '';
-                if ($origin && in_array($origin, $allowed, true)) {
+                if (jwt_login_destination_is_allowed($return_to, jwt_login_allowed_frontend_origins())) {
                     header('Content-Type: text/html; charset=utf-8');
                     ?>
                     <!doctype html><meta charset="utf-8">
@@ -583,12 +652,11 @@ add_action('rest_api_init', function () {
                 }
             }
 
-            // --- Same-host redirect (safe) ---
+            // --- Configured WordPress-origin redirect ---
             if ($redirect) {
-                $this_host = $_SERVER['HTTP_HOST'] ?? '';
-                $host = parse_url($redirect, PHP_URL_HOST);
-                if ($host && $this_host && strcasecmp($host, $this_host) === 0) {
-                    wp_safe_redirect($redirect);
+                if (jwt_login_destination_is_allowed($redirect, jwt_login_wordpress_origins())
+                    && wp_safe_redirect($redirect)
+                ) {
                     exit;
                 }
             }
