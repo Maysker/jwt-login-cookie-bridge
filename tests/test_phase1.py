@@ -45,6 +45,15 @@ class PhaseOneRegressionTests(unittest.TestCase):
         self.assertNotIn("HTTP_HOST", redirect)
         self.assertNotIn("parse_url($return_to", redirect)
 
+    def test_popup_target_uses_canonical_frontend_origin(self):
+        popup = self.source[
+            self.source.index("// --- POPUP ---"):self.source.index("// --- BOUNCE ---")
+        ]
+        self.assertIn("jwt_login_canonical_origin($return_origin)", popup)
+        self.assertIn("jwt_login_allowed_frontend_origins()", popup)
+        self.assertIn("json_encode($ok_origin)", popup)
+        self.assertNotIn("jwt_login_allowed_origins()", popup)
+
     def test_cookie_attributes_and_paths_are_preserved(self):
         setter = self.function_source("jwt_login_cookie_set_auth_cookies")
         self.assertIn("ADMIN_COOKIE_PATH", setter)

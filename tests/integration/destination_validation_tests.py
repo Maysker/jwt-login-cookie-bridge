@@ -85,6 +85,18 @@ class DestinationValidationTests(unittest.TestCase):
         self.assertIsNotNone(match, body)
         self.assertEqual(destination, json.loads(match.group(1)))
 
+    def popup_target_origin(self, **parameters):
+        status, headers, body = self.bridge_request(mode="popup", **parameters)
+        self.assertEqual(200, status, headers)
+        self.assertIn("'woo-login-ok'", body)
+        match = re.search(r"var origin = (\"(?:\\.|[^\"])*\");", body)
+        self.assertIsNotNone(match, body)
+        return json.loads(match.group(1))
+
+    def assert_popup_rejected(self, return_origin=None, *, include_origin=True):
+        parameters = {"return_origin": return_origin} if include_origin else {}
+        self.assertEqual("", self.popup_target_origin(**parameters))
+
     def assert_navigation_rejected(self, *, request_host=None, **parameters):
         status, headers, body = self.bridge_request(request_host=request_host, **parameters)
         self.assertEqual(200, status, headers)
@@ -118,6 +130,48 @@ class DestinationValidationTests(unittest.TestCase):
         for destination in destinations:
             with self.subTest(destination=destination):
                 self.assert_navigation_rejected(mode="bounce", return_to=destination)
+
+    def test_popup_accepts_trusted_origins_and_uses_canonical_target(self):
+        destinations = {
+            "https://frontend.example.com": "https://frontend.example.com",
+            "https://frontend.example.com:443": "https://frontend.example.com",
+            "http://http-frontend.example.com:80": "http://http-frontend.example.com",
+            "https://ports.example.com:4443": "https://ports.example.com:4443",
+        }
+        for destination, expected_target in destinations.items():
+            with self.subTest(destination=destination):
+                self.assertEqual(
+                    expected_target,
+                    self.popup_target_origin(return_origin=destination),
+                )
+
+    def test_popup_rejects_untrusted_or_non_origin_destinations(self):
+        destinations = [
+            "https://frontend.example.com:8443",
+            "http://frontend.example.com",
+            "https://frontend.example.com.evil.test",
+            "https://evil.frontend.example.com",
+            "frontend.example.com",
+            "//frontend.example.com",
+            "/frontend.example.com",
+            "https://frontend.example.com/path",
+            "https://frontend.example.com?query=value",
+            "https://frontend.example.com#fragment",
+            "https://user:password@frontend.example.com",
+            "https://frontend.example.com:99999",
+            "https://frontend.example.com:invalid",
+            "https://frontend.example.com\x01",
+            "https://frontend.example.com,https://evil.example.test",
+            "https:\\frontend.example.com",
+            "https:///frontend.example.com",
+            "null",
+        ]
+        for destination in destinations:
+            with self.subTest(destination=repr(destination)):
+                self.assert_popup_rejected(destination)
+
+    def test_popup_rejects_missing_return_origin_without_failing_login(self):
+        self.assert_popup_rejected(include_origin=False)
 
     def test_same_origin_redirect_accepts_exact_effective_port_and_preserves_url(self):
         destination = BASE_URL + "/checkout/order-pay/123/?key=test-key&source=bridge#payment"

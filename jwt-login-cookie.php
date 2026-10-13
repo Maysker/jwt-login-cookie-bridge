@@ -619,8 +619,10 @@ add_action('rest_api_init', function () {
 
             // --- POPUP ---
             if ($mode === 'popup') {
-                $allowed = jwt_login_allowed_origins();
-                $ok_origin = ($return_origin && in_array($return_origin, $allowed, true)) ? $return_origin : '';
+                $ok_origin = jwt_login_canonical_origin($return_origin);
+                if ($ok_origin === '' || !in_array($ok_origin, jwt_login_allowed_frontend_origins(), true)) {
+                    $ok_origin = '';
+                }
                 header('Content-Type: text/html; charset=utf-8');
                 ?>
                 <!doctype html><meta charset="utf-8">
