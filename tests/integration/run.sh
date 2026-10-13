@@ -150,6 +150,38 @@ echo 'Pinned integration environment:'
 "${compose[@]}" run --rm cli wp plugin get woocommerce --field=version
 "${compose[@]}" exec --no-TTY database mariadb --version
 
+run_cors_isolation() {
+    local baseline_file="$runtime_dir/cors-unrelated-baseline.json"
+
+    echo 'REST CORS isolation baseline: Bridge disabled'
+    "${compose[@]}" run --rm cli wp plugin deactivate jwt-login-cookie
+    PYTHONDONTWRITEBYTECODE=1 \
+    JWT_BRIDGE_BASE_URL="$base_url" \
+    JWT_BRIDGE_CURL_RESOLVE="$curl_resolve" \
+    JWT_BRIDGE_TEST_SECRET="$test_secret" \
+    JWT_BRIDGE_TEST_USER_ID="$test_user_id" \
+    JWT_BRIDGE_CORS_MODE=capture \
+    JWT_BRIDGE_CORS_BASELINE_FILE="$baseline_file" \
+    python3 "$integration_dir/cors_isolation_tests.py"
+
+    "${compose[@]}" run --rm cli wp plugin activate jwt-login-cookie
+    echo 'REST CORS isolation verification: Bridge enabled'
+    PYTHONDONTWRITEBYTECODE=1 \
+    JWT_BRIDGE_BASE_URL="$base_url" \
+    JWT_BRIDGE_CURL_RESOLVE="$curl_resolve" \
+    JWT_BRIDGE_TEST_SECRET="$test_secret" \
+    JWT_BRIDGE_TEST_USER_ID="$test_user_id" \
+    JWT_BRIDGE_CORS_MODE=verify \
+    JWT_BRIDGE_CORS_BASELINE_FILE="$baseline_file" \
+    python3 "$integration_dir/cors_isolation_tests.py"
+}
+
+run_cors_isolation
+
+if [[ "${JWT_BRIDGE_ONLY_CORS:-0}" == "1" ]]; then
+    exit 0
+fi
+
 run_cookie_scope() {
     local scenario=$1
     local cookie_domain=$2

@@ -179,3 +179,11 @@ add_action('rest_api_init', function (): void {
         },
     ]);
 });
+
+add_filter('rest_pre_serve_request', function ($served, $result, WP_REST_Request $request) {
+    if ($request->get_route() === '/custom/v1/login_via_jwt') {
+        header('Vary: Accept-Encoding', false);
+    }
+
+    return $served;
+}, 15, 3);

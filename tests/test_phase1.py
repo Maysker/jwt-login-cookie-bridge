@@ -156,6 +156,14 @@ class PhaseOneRegressionTests(unittest.TestCase):
         self.assertLess(validation, cookie_check)
         self.assertIn("['status' => 409]", self.source[cookie_check:])
 
+    def test_rest_cors_and_options_are_bridge_scoped(self):
+        route_check = self.function_source("jwt_login_is_bridge_rest_request")
+        self.assertIn("$request->get_route() === '/custom/v1/login_via_jwt'", route_check)
+        self.assertIn("add_filter('rest_pre_dispatch'", self.source)
+        self.assertIn("add_filter('rest_pre_serve_request'", self.source)
+        self.assertNotIn("remove_filter('rest_pre_serve_request', 'rest_send_cors_headers')", self.source)
+        self.assertNotIn("strpos($uri, '/wp-json/')", self.source)
+
 
 if __name__ == "__main__":
     unittest.main()

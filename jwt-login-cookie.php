@@ -599,48 +599,122 @@ add_action('rest_api_init', function () {
 });
 
 // =========================================================
-// CORS (strict whitelist)
+// Bridge-only REST CORS and preflight handling
 // =========================================================
-add_action('rest_api_init', function () {
-    // Remove WP's default CORS so we can send strict headers
-    remove_filter('rest_pre_serve_request', 'rest_send_cors_headers');
-
-    add_filter('rest_pre_serve_request', function ($value) {
-        $origin  = $_SERVER['HTTP_ORIGIN'] ?? '';
-        $allowed = jwt_login_allowed_origins();
-        if ($origin && in_array($origin, $allowed, true)) {
-            header('Access-Control-Allow-Origin: ' . $origin);
-            header('Vary: Origin');
-            header('Access-Control-Allow-Credentials: true');
-            header('Access-Control-Allow-Headers: Authorization, Content-Type');
-            header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-        }
-        return $value;
-    });
-}, 15);
-
-// =========================================================
-// Preflight for REST only (allowed origins)
-// =========================================================
-add_action('init', function () {
-    $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? '');
-    $uri    = $_SERVER['REQUEST_URI'] ?? '';
-    if ($method === 'OPTIONS' && strpos($uri, '/wp-json/') === 0) {
-        $origin  = $_SERVER['HTTP_ORIGIN'] ?? '';
-        $allowed = jwt_login_allowed_origins();
-        if ($origin && in_array($origin, $allowed, true)) {
-            header('Access-Control-Allow-Origin: ' . $origin);
-            header('Vary: Origin');
-            header('Access-Control-Allow-Credentials: true');
-            header('Access-Control-Allow-Headers: Authorization, Content-Type');
-            header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-            status_header(204);
-            exit;
-        }
-        status_header(403);
-        exit;
+if (!function_exists('jwt_login_is_bridge_rest_request')) {
+    function jwt_login_is_bridge_rest_request(\WP_REST_Request $request): bool {
+        return $request->get_route() === '/custom/v1/login_via_jwt';
     }
-});
+}
+
+if (!function_exists('jwt_login_trusted_request_origin')) {
+    function jwt_login_trusted_request_origin(\WP_REST_Request $request): string {
+        $origin = jwt_login_canonical_origin($request->get_header('origin'));
+
+        return $origin !== '' && in_array($origin, jwt_login_trusted_origins(), true)
+            ? $origin
+            : '';
+    }
+}
+
+if (!function_exists('jwt_login_preflight_headers_are_allowed')) {
+    function jwt_login_preflight_headers_are_allowed($value): bool {
+        if (!is_string($value) || $value === '') {
+            return true;
+        }
+
+        $allowed = ['authorization' => true, 'content-type' => true];
+        foreach (explode(',', $value) as $header) {
+            $header = trim($header);
+            if ($header === ''
+                || !preg_match("/\\A[!#$%&'*+.^_`|~0-9A-Za-z-]+\\z/", $header)
+                || !isset($allowed[strtolower($header)])
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('jwt_login_add_vary_header')) {
+    /**
+     * Add one Vary token without discarding values emitted by WordPress or plugins.
+     */
+    function jwt_login_add_vary_header(string $required): void {
+        $tokens = [];
+        foreach (headers_list() as $header) {
+            if (stripos($header, 'Vary:') !== 0) {
+                continue;
+            }
+            foreach (explode(',', substr($header, 5)) as $token) {
+                $token = trim($token);
+                if ($token !== '') {
+                    $tokens[strtolower($token)] = $token;
+                }
+            }
+        }
+
+        if (!isset($tokens['*'])) {
+            $tokens[strtolower($required)] = $required;
+        }
+
+        header_remove('Vary');
+        header('Vary: ' . implode(', ', $tokens), true);
+    }
+}
+
+add_filter('rest_pre_dispatch', function ($result, \WP_REST_Server $server, \WP_REST_Request $request) {
+    if (!jwt_login_is_bridge_rest_request($request) || strtoupper($request->get_method()) !== 'OPTIONS') {
+        return $result;
+    }
+
+    if (jwt_login_trusted_request_origin($request) === '') {
+        return new \WP_Error('forbidden_origin', 'Request origin is not allowed.', ['status' => 403]);
+    }
+
+    $requested_method = $request->get_header('access-control-request-method');
+    if (!is_string($requested_method)
+        || strcasecmp(trim($requested_method), 'POST') !== 0
+        || !jwt_login_preflight_headers_are_allowed($request->get_header('access-control-request-headers'))
+    ) {
+        return new \WP_Error('invalid_preflight', 'Preflight request is not allowed.', ['status' => 403]);
+    }
+
+    $response = new \WP_REST_Response(null, 204);
+    $response->header('Allow', 'POST, OPTIONS');
+    return $response;
+}, 9, 3);
+
+add_filter('rest_pre_serve_request', function ($served, $result, \WP_REST_Request $request) {
+    if (!jwt_login_is_bridge_rest_request($request)) {
+        return $served;
+    }
+
+    foreach ([
+        'Access-Control-Allow-Origin',
+        'Access-Control-Allow-Credentials',
+        'Access-Control-Allow-Headers',
+        'Access-Control-Allow-Methods',
+    ] as $header) {
+        header_remove($header);
+    }
+
+    jwt_login_add_vary_header('Origin');
+    $origin = jwt_login_trusted_request_origin($request);
+    if ($origin !== '') {
+        header('Access-Control-Allow-Origin: ' . $origin, true);
+        header('Access-Control-Allow-Credentials: true', true);
+
+        if (strtoupper($request->get_method()) === 'OPTIONS') {
+            header('Access-Control-Allow-Headers: Authorization, Content-Type', true);
+            header('Access-Control-Allow-Methods: POST, OPTIONS', true);
+        }
+    }
+
+    return $served;
+}, 20, 3);
 
 // =========================================================
 // EMBED EXCEPTION for Woo checkout (iframe from frontend.example.com)

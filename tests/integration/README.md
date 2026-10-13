@@ -57,6 +57,7 @@ The tests cover:
 - Transport-aware Origin enforcement for Bearer, form, and JSON tokens, including canonical ports and rejection before JWT validation.
 - Mixed standard-login and Bridge-login sequences for the same and different users, including cookie scope, session-token association, resolved request identity, rejection without session creation, and logout expiration headers.
 - The optional RS256 example adapter with disposable RSA keys, including signature, algorithm, claim, identity, public-key, dependency, and configuration failures.
+- Bridge-only CORS and OPTIONS handling, compared with native WordPress behavior on unrelated core and WooCommerce REST routes while the Bridge is disabled.
 
 Standard logout must both revoke the bridge-created session and leave no WordPress authentication cookies in curl's cookie jar in every scope scenario.
 
