@@ -1,6 +1,6 @@
 # JWT Login Cookie Bridge (SameSite + CORS)
 
-**Version:** 2.3\
+**Version:** 3.0.0\
 **Author:** Adam Gazdiev\
 **License:** GPLv3 or later
 
@@ -24,30 +24,27 @@ This plugin was originally developed for **AiroCollect**, a SaaS platform integr
 -  Supports multiple redirect modes: `popup`, `bounce`, `redirect`
 -  Enforces modern cookie attributes: `SameSite=None; Secure; HttpOnly`
 -  Provider-agnostic validation contract with explicit server-side selection
--  Compatible with WooCommerce session handling
+-  Optional WooCommerce session and checkout integration
 -  WordPress and WooCommerce API–safe (no core file modification)
 
 ---
 
 ## 🧰 Installation
 
-1. **Create plugin folder:**
+1. **Install the release ZIP** in **Plugins → Add Plugin → Upload Plugin**, or extract it so the entry file is located at:
 
    ```bash
-   mkdir /var/www/html/wp-content/plugins/jwt-login-cookie
-   cd /var/www/html/wp-content/plugins/jwt-login-cookie
+   wp-content/plugins/jwt-login-cookie/jwt-login-cookie.php
    ```
 
-2. **Copy the main file:** Save your plugin as:
-
-   ```bash
-   jwt-login-cookie.php
-   ```
-
-3. **Activate it** in your WordPress admin:\
+2. **Activate it** in your WordPress admin:\
    Go to **Plugins → Installed Plugins → Activate**
 
+3. **Install and select exactly one trusted JWT validator.** The Bridge does not automatically use another JWT plugin. See [JWT-based login endpoint](#1-jwt-based-login-endpoint) and the migration guide.
+
 4. **Configure trusted frontend origins** from a persistent MU-plugin or trusted configuration plugin. Do not edit `jwt-login-cookie.php`; see [Persistent frontend-Origin configuration](#persistent-frontend-origin-configuration).
+
+Basic WordPress login bridging does not require WooCommerce. WooCommerce is needed only for WooCommerce session bootstrapping and the documented checkout, `order-pay`, and optional iframe integration.
 
 For existing 2.3 installations, complete the [2.3 to 3.0.0 migration guide](MIGRATION-2.3-to-3.0.0.md) before upgrading. The planned 3.0.0 release does not automatically trust JWTs accepted by another WordPress plugin.
 
@@ -132,23 +129,49 @@ This is an API example, not a built-in validator. Without exactly one registrati
 
 A complete optional RS256 adapter with its own Composer dependency and installation instructions is available in [`examples/rs256-validator`](examples/rs256-validator/README.md). It is not loaded or selected automatically and does not add a JWT dependency to the Bridge.
 
-### 2. Example (Angular frontend)
+### 2. Top-level popup example
+
+Popup and bounce modes return navigation HTML and must be used as top-level window/form navigations, not as XHR or `fetch()` response handlers. Never put the JWT in the URL. This example opens a named popup and POSTs the token in a form body; the browser supplies the request `Origin`:
 
 ```typescript
-this.http.post(
-  'https://your-woo-domain.com/wp-json/custom/v1/login_via_jwt',
-  { mode: 'popup', return_origin: window.location.origin },
-  { withCredentials: true, headers: { Authorization: `Bearer ${jwt}` } }
-).subscribe();
+function loginWithPopup(bridgeUrl: string, jwt: string): Window | null {
+  const target = 'jwt-login-bridge-popup';
+  const popup = window.open('', target, 'popup,width=520,height=640');
+  if (!popup) return null;
+
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = bridgeUrl;
+  form.target = target;
+
+  for (const [name, value] of Object.entries({
+    token: jwt,
+    mode: 'popup',
+    return_origin: window.location.origin,
+  })) {
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
+  }
+
+  document.body.appendChild(form);
+  form.submit();
+  form.remove();
+  return popup;
+}
 ```
 
-After success, WordPress recognizes the user as authenticated — your WooCommerce cart, orders, and account pages will now be accessible.
+The opener must accept only the fixed `woo-login-ok` message and must verify `event.origin` against its expected WordPress origin. The popup target is validated independently against the configured frontend-origin list. Browser cookie policy still applies; cross-site contexts require HTTPS and may be affected by third-party-cookie restrictions.
+
+XHR or `fetch()` is appropriate only when the caller expects the normal JSON result and does not request popup, bounce, or redirect navigation behavior.
 
 ---
 
 ## 🧪 Real-world Example: Angular + Woo order-pay flow
 
-Below is a real integration pattern used in production — an Angular component that logs in the user on WooCommerce using JWT, then redirects to the correct `/checkout/order-pay/:id` page.
+Below is a top-level form-navigation pattern for a WooCommerce `/checkout/order-pay/:id` page. It is valid only when the selected Bridge validator has been explicitly configured to verify the exact token contract returned by the token issuer; installing a WordPress JWT plugin alone does not establish that compatibility.
 
 ```typescript
 // ------------ Woo order-pay helpers ------------
@@ -163,22 +186,13 @@ private buildPayUrl(base: string, orderId: number, orderKey: string, checkoutSlu
 
 private async loginOnShopAndGoToPayTopLevel(opts: {
   wpBase: string;
-  username: string;
-  password: string;
+  jwt: string;
   orderId: number;
   orderKey: string;
   checkoutSlug?: string;
 }): Promise<void> {
   const checkoutSlug = opts.checkoutSlug ?? 'checkout';
   const payUrl = this.buildPayUrl(opts.wpBase, opts.orderId, opts.orderKey, checkoutSlug);
-
-  const jwtRes = await fetch(`${opts.wpBase}/wp-json/jwt-auth/v1/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: opts.username, password: opts.password })
-  });
-  if (!jwtRes.ok) throw new Error(`JWT request failed: ${jwtRes.status}`);
-  const { token } = await jwtRes.json();
 
   const form = document.createElement('form');
   form.method = 'POST';
@@ -188,7 +202,7 @@ private async loginOnShopAndGoToPayTopLevel(opts: {
   const inpToken = document.createElement('input');
   inpToken.type = 'hidden';
   inpToken.name = 'token';
-  inpToken.value = token;
+  inpToken.value = opts.jwt;
 
   const inpRedirect = document.createElement('input');
   inpRedirect.type = 'hidden';
@@ -204,8 +218,8 @@ private async loginOnShopAndGoToPayTopLevel(opts: {
 ```
 
 ### Flow Summary
-1. Angular app requests JWT via `/wp-json/jwt-auth/v1/token`.
-2. Submits a hidden form to `/wp-json/custom/v1/login_via_jwt` (this plugin).
+1. The application obtains a JWT from the issuer configured for the selected Bridge validator.
+2. It submits a hidden top-level form to `/wp-json/custom/v1/login_via_jwt` (this plugin).
 3. Plugin sets WordPress cookies and redirects user to `/checkout/order-pay/...`.
 4. User is recognized as logged-in WooCommerce customer.
 
@@ -247,12 +261,17 @@ Body-token requests require an exact trusted HTTP(S) `Origin`. Bearer requests m
 
 Bounce and WordPress redirect destinations are checked independently using their complete canonical origins, including scheme, host, and effective port. Explicit default ports are equivalent to omitted defaults; non-default ports must be explicitly trusted.
 
+The plugin header's `Update URI` protects this independently hosted plugin from an unrelated WordPress.org slug collision. It does not make GitHub deliver updates automatically; updates remain a manual release-installation responsibility unless a separate trusted updater is configured.
+
+The declared minimums are WordPress 5.8 and PHP 7.4 based on the APIs and language features used. Release installation is verified on the pinned WordPress 7.1.3/PHP 8.3 environment; older supported combinations are not part of the release-candidate runtime matrix.
+
 ---
 
 ## 📦 Version History
 
 | Version | Description                                                                      |
 | ------- | -------------------------------------------------------------------------------- |
+| 3.0.0   | Breaking validator, transport, Origin, cookie, redirect, and framing hardening   |
 | 2.3     | Stable release with popup/bounce/redirect modes, CSP support, long-lived cookies |
 | 2.4–2.5 | Internal revisions, not published                                                |
 | 2.6     | Production-optimized version for environments with server-level XFO disabled     |

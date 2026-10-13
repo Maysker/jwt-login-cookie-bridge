@@ -4,7 +4,13 @@ This directory is an independently installable WordPress plugin demonstrating th
 
 The example accepts only RS256 tokens verified by one administrator-configured RSA public key. It requires exact issuer and audience matches, mandatory integer `iat`, `nbf`, and `exp` claims, a configured maximum lifetime, and a configurable claim containing a positive WordPress user ID. The Bridge separately confirms that the user exists.
 
-## Normal plugin installation
+## Release ZIP installation
+
+The curated validator release ZIP includes its own audited Composer dependencies. Upload it through **Plugins → Add Plugin → Upload Plugin**, activate it, and add the trusted configuration below to `wp-config.php` before testing the Bridge.
+
+The adapter's `Update URI` prevents a WordPress.org slug collision; it does not automatically deliver updates from GitHub.
+
+## Installation from source
 
 1. Copy this directory to `wp-content/plugins/jwt-login-rs256-validator`.
 2. In that directory, install the adapter-owned dependency:

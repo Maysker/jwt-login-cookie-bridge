@@ -1,12 +1,15 @@
 <?php
 /**
- * Plugin Name: JWT Login Cookie (SameSite + CORS, Popup/Bounce, Embed Exception)
- * Description: Exchange a JWT for WP login cookies (SameSite=None; Secure) with strict CORS. Supports popup & same-tab bounce SSO. 
- * Adds an embed exception for WooCommerce checkout so it can be framed by your app.
- * Version: 2.3
- * Author: Adam Gazdiev(Airobot nv)
+ * Plugin Name: JWT Login Cookie Bridge
+ * Plugin URI: https://github.com/Maysker/jwt-login-cookie-bridge
+ * Description: Exchange explicitly verified JWTs for secure WordPress login cookies with strict Origin controls.
+ * Version: 3.0.0
+ * Requires at least: 5.8
+ * Requires PHP: 7.4
+ * Author: Adam Gazdiev (Airobot nv)
  * License: GPLv3 or later
- * License URL: https://www.gnu.org/licenses/gpl-3.0.html
+ * License URI: https://www.gnu.org/licenses/gpl-3.0.html
+ * Update URI: https://github.com/Maysker/jwt-login-cookie-bridge
  */
 
 // =========================================================

@@ -27,6 +27,14 @@ class PhaseOneRegressionTests(unittest.TestCase):
         self.assertIn("$request->get_body_params()", self.source)
         self.assertIn("$request->get_json_params()", self.source)
 
+    def test_release_metadata_is_consistent(self):
+        self.assertIn("* Version: 3.0.0", self.source)
+        self.assertIn("* Requires at least: 5.8", self.source)
+        self.assertIn("* Requires PHP: 7.4", self.source)
+        self.assertIn("* License: GPLv3 or later", self.source)
+        self.assertIn("* License URI: https://www.gnu.org/licenses/gpl-3.0.html", self.source)
+        self.assertIn("* Update URI: https://github.com/Maysker/jwt-login-cookie-bridge", self.source)
+
     def test_response_modes_are_preserved(self):
         for mode in ("popup", "bounce"):
             self.assertIn(f"$mode === '{mode}'", self.source)

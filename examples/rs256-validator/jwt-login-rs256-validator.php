@@ -1,9 +1,15 @@
 <?php
 /**
  * Plugin Name: JWT Login Cookie Bridge - Example RS256 Validator
+ * Plugin URI: https://github.com/Maysker/jwt-login-cookie-bridge/tree/master/examples/rs256-validator
  * Description: Optional provider-neutral RS256 validator for JWT Login Cookie Bridge.
  * Version: 1.0.0
+ * Requires at least: 5.8
+ * Requires PHP: 8.0
+ * Author: Adam Gazdiev (Airobot nv)
  * License: GPLv3 or later
+ * License URI: https://www.gnu.org/licenses/gpl-3.0.html
+ * Update URI: https://github.com/Maysker/jwt-login-cookie-bridge/tree/master/examples/rs256-validator
  */
 
 defined('ABSPATH') || exit;
