@@ -45,6 +45,15 @@ class PhaseOneRegressionTests(unittest.TestCase):
         self.assertNotIn("HTTP_HOST", redirect)
         self.assertNotIn("parse_url($return_to", redirect)
 
+    def test_frontend_origins_have_a_persistent_filter_configuration_api(self):
+        configured = self.function_source("jwt_login_allowed_origins")
+        self.assertIn("apply_filters('jwt_login_allowed_origins'", configured)
+        self.assertIn("is_array($configured_origins)", configured)
+
+        canonical = self.function_source("jwt_login_canonical_origin")
+        self.assertIn("\\\\", canonical)
+        self.assertIn("*", canonical)
+
     def test_popup_target_uses_canonical_frontend_origin(self):
         popup = self.source[
             self.source.index("// --- POPUP ---"):self.source.index("// --- BOUNCE ---")

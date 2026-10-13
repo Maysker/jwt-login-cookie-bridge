@@ -47,7 +47,33 @@ This plugin was originally developed for **AiroCollect**, a SaaS platform integr
 3. **Activate it** in your WordPress admin:\
    Go to **Plugins → Installed Plugins → Activate**
 
-4. **Adjust your CORS whitelist** in `jwt_login_allowed_origins()` — include all frontend domains that should be allowed to log in.
+4. **Configure trusted frontend origins** from a persistent MU-plugin or trusted configuration plugin. Do not edit `jwt-login-cookie.php`; see [Persistent frontend-Origin configuration](#persistent-frontend-origin-configuration).
+
+For existing 2.3 installations, complete the [2.3 to 3.0.0 migration guide](MIGRATION-2.3-to-3.0.0.md) before upgrading. The planned 3.0.0 release does not automatically trust JWTs accepted by another WordPress plugin.
+
+### Persistent frontend-Origin configuration
+
+The `jwt_login_allowed_origins` filter is the public server-side configuration API. Register it at file scope from trusted code and return the complete list for the current environment. Returning a replacement list avoids retaining the example defaults unintentionally.
+
+Create `wp-content/mu-plugins/jwt-login-bridge-config.php` (WordPress automatically loads PHP files directly in `mu-plugins`):
+
+```php
+<?php
+/**
+ * Plugin Name: JWT Login Bridge Site Configuration
+ */
+
+add_filter('jwt_login_allowed_origins', function (array $default_origins): array {
+    return [
+        'https://app.example.com',
+        'https://account.example.com:8443',
+    ];
+});
+```
+
+This callback must use server-controlled values; never build the list from `Origin`, `Host`, `Referer`, request parameters, or JWT claims. Each entry must be one absolute HTTP(S) origin containing only scheme, host, and optional port. Wildcards, credentials, paths, queries, fragments, control characters, backslashes, and malformed ports are rejected. Scheme and host are case-normalized, `:443` for HTTPS and `:80` for HTTP are removed, and every non-default port must be listed explicitly. Duplicate canonical origins collapse to one entry. Returning an empty array trusts no frontend origins. With no filter, the existing built-in list is unchanged.
+
+The same frontend list controls browser request-Origin authorization, Bridge CORS grants, popup targets, bounce destinations, and the optional WooCommerce checkout `frame-ancestors` exception. Listing an origin therefore also makes it eligible to frame supported checkout and `order-pay` responses when no stricter existing CSP or X-Frame-Options policy blocks framing. Add only origins that should receive all of those narrowly scoped privileges. An invalid entry is never trusted for login or navigation and causes the optional checkout frame exception to fail closed.
 
 ### Iframe checkout policy
 
@@ -189,7 +215,7 @@ private async loginOnShopAndGoToPayTopLevel(opts: {
 
 | Setting                                   | Description                                                |
 | ----------------------------------------- | ---------------------------------------------------------- |
-| `jwt_login_allowed_origins()`             | List of allowed frontend origins (CORS whitelist)          |
+| `jwt_login_allowed_origins` filter        | Replaces the trusted frontend-origin list from server-side code |
 | `JWT_LOGIN_COOKIE_DOMAIN`                 | Optional cookie domain override                            |
 | `JWT_LOGIN_ACTIVE_VALIDATOR`              | Required server-side ID of the trusted JWT validator       |
 | `jwt_login_register_validator()`          | Registers a validator during `jwt_login_register_validators` |
@@ -217,7 +243,7 @@ private async loginOnShopAndGoToPayTopLevel(opts: {
 
 The selected validator is responsible for the cryptographic algorithm, key, temporal constraints and provider-specific required claims. Do not log raw JWTs or secrets.
 
-Body-token requests require an exact trusted HTTP(S) `Origin`. Bearer requests may omit `Origin` for server-to-server compatibility, but any supplied Origin must be trusted. Trusted origins are taken from `jwt_login_allowed_origins()` and the configured WordPress home/site URLs. CORS remains separate from this authorization check.
+Body-token requests require an exact trusted HTTP(S) `Origin`. Bearer requests may omit `Origin` for server-to-server compatibility, but any supplied Origin must be trusted. Trusted frontend origins come from the `jwt_login_allowed_origins` filter; configured WordPress home/site origins are also trusted for request authorization. CORS remains separate from this authorization check.
 
 Bounce and WordPress redirect destinations are checked independently using their complete canonical origins, including scheme, host, and effective port. Explicit default ports are equivalent to omitted defaults; non-default ports must be explicitly trusted.
 

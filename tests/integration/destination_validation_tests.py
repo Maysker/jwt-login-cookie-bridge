@@ -12,7 +12,8 @@ BASE_URL = os.environ["JWT_BRIDGE_BASE_URL"]
 RESOLVE = os.environ["JWT_BRIDGE_CURL_RESOLVE"]
 TEST_SECRET = os.environ["JWT_BRIDGE_TEST_SECRET"]
 TEST_USER_ID = os.environ["JWT_BRIDGE_TEST_USER_ID"]
-BRIDGE_PATH = "/wp-json/custom/v1/login_via_jwt?jwt_bridge_destination_fixture=ports"
+BRIDGE_ROUTE = "/wp-json/custom/v1/login_via_jwt"
+ORIGIN_CONFIG_ROUTE = "/wp-json/jwt-bridge-test/v1/origin-config"
 ALLOWED_REQUEST_ORIGIN = "https://frontend.example.com"
 
 
@@ -20,7 +21,7 @@ class CurlClient:
     def __init__(self, directory):
         self.directory = Path(directory)
 
-    def request(self, path, *, data=None, headers=None):
+    def request(self, path, *, method=None, data=None, headers=None):
         response_headers = self.directory / "headers.txt"
         response_body = self.directory / "body.txt"
         command = [
@@ -32,6 +33,8 @@ class CurlClient:
         ]
         for key, value in (headers or {}).items():
             command.extend(["--header", f"{key}: {value}"])
+        if method is not None:
+            command.extend(["--request", method])
         if data is not None:
             command.extend(["--data", data])
         command.append(BASE_URL + path)
@@ -64,19 +67,33 @@ class DestinationValidationTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary_directory.cleanup()
 
-    def bridge_request(self, *, request_host=None, **parameters):
+    @staticmethod
+    def fixture_path(route, fixture):
+        return route if fixture is None else f"{route}?jwt_bridge_origin_fixture={fixture}"
+
+    def bridge_request(self, *, fixture="ports", request_host=None,
+                       request_origin=ALLOWED_REQUEST_ORIGIN, **parameters):
         payload = {"token": self.token, **parameters}
         headers = {
             "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": ALLOWED_REQUEST_ORIGIN,
+            "Origin": request_origin,
         }
         if request_host is not None:
             headers["Host"] = request_host
         return self.client.request(
-            BRIDGE_PATH,
+            self.fixture_path(BRIDGE_ROUTE, fixture),
             data=urlencode(payload),
             headers=headers,
         )
+
+    def configured_origins(self, fixture=None):
+        path = self.fixture_path(ORIGIN_CONFIG_ROUTE, fixture)
+        status, headers, body = self.client.request(
+            path,
+            headers={"X-JWT-Bridge-Test-Secret": TEST_SECRET},
+        )
+        self.assertEqual(200, status, headers)
+        return json.loads(body)
 
     def assert_bounce_allowed(self, destination):
         status, headers, body = self.bridge_request(mode="bounce", return_to=destination)
@@ -172,6 +189,86 @@ class DestinationValidationTests(unittest.TestCase):
 
     def test_popup_rejects_missing_return_origin_without_failing_login(self):
         self.assert_popup_rejected(include_origin=False)
+
+    def test_origin_filter_handles_defaults_canonicalization_and_invalid_entries(self):
+        cases = {
+            None: {
+                "allowed": [
+                    "https://frontend.example.com",
+                    "https://dev.example.com",
+                    "https://localhost:4200",
+                    "http://localhost:4200",
+                ],
+                "frame": [
+                    "https://frontend.example.com",
+                    "https://dev.example.com",
+                    "https://localhost:4200",
+                    "http://localhost:4200",
+                ],
+            },
+            "single": {
+                "allowed": ["https://single.example.com"],
+                "frame": ["https://single.example.com"],
+            },
+            "ports": {
+                "allowed": [
+                    "https://frontend.example.com",
+                    "http://http-frontend.example.com",
+                    "https://ports.example.com:4443",
+                ],
+                "frame": [
+                    "https://frontend.example.com",
+                    "http://http-frontend.example.com",
+                    "https://ports.example.com:4443",
+                ],
+            },
+            "duplicates": {
+                "allowed": [
+                    "https://frontend.example.com",
+                    "https://ports.example.com:4443",
+                ],
+                "frame": [
+                    "https://frontend.example.com",
+                    "https://ports.example.com:4443",
+                ],
+            },
+            "invalid": {
+                "allowed": ["https://frontend.example.com"],
+                "frame": None,
+            },
+            "empty": {"allowed": [], "frame": None},
+        }
+        for fixture, expected in cases.items():
+            with self.subTest(fixture=fixture):
+                self.assertEqual(expected, self.configured_origins(fixture))
+
+    def test_empty_or_unlisted_configuration_rejects_browser_requests(self):
+        for fixture, origin in [
+            ("empty", ALLOWED_REQUEST_ORIGIN),
+            ("single", ALLOWED_REQUEST_ORIGIN),
+            ("ports", "https://untrusted.example.invalid"),
+        ]:
+            with self.subTest(fixture=fixture, origin=origin):
+                status, _, body = self.bridge_request(
+                    fixture=fixture,
+                    request_origin=origin,
+                )
+                self.assertEqual(403, status)
+                self.assertEqual("forbidden_origin", json.loads(body)["code"])
+
+    def test_custom_origin_filter_preserves_cors_preflight_behavior(self):
+        origin = "https://ports.example.com:4443"
+        status, headers, _ = self.client.request(
+            self.fixture_path(BRIDGE_ROUTE, "ports"),
+            method="OPTIONS",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "Authorization, Content-Type",
+            },
+        )
+        self.assertEqual(204, status, headers)
+        self.assertIn(f"Access-Control-Allow-Origin: {origin}".lower(), headers.lower())
 
     def test_same_origin_redirect_accepts_exact_effective_port_and_preserves_url(self):
         destination = BASE_URL + "/checkout/order-pay/123/?key=test-key&source=bridge#payment"

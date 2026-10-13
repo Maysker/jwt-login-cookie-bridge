@@ -7,20 +7,47 @@
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
 
-if (isset($_GET['jwt_bridge_destination_fixture'])
-    && $_GET['jwt_bridge_destination_fixture'] === 'ports'
-    && !function_exists('jwt_login_allowed_origins')
-) {
-    function jwt_login_allowed_origins(): array {
-        return [
-            'https://frontend.example.com',
-            'https://dev.example.com',
-            'https://localhost:4200',
-            'http://localhost:4200',
-            'http://http-frontend.example.com',
-            'https://ports.example.com:4443',
-        ];
-    }
+if (isset($_GET['jwt_bridge_origin_fixture'])) {
+    $jwt_bridge_origin_fixture = (string) $_GET['jwt_bridge_origin_fixture'];
+    add_filter('jwt_login_allowed_origins', function (array $default_origins) use ($jwt_bridge_origin_fixture): array {
+        if ($jwt_bridge_origin_fixture === 'single') {
+            return ['https://single.example.com:443'];
+        }
+        if ($jwt_bridge_origin_fixture === 'ports') {
+            return [
+                'https://frontend.example.com',
+                'http://http-frontend.example.com',
+                'https://ports.example.com:4443',
+            ];
+        }
+        if ($jwt_bridge_origin_fixture === 'duplicates') {
+            return [
+                'https://frontend.example.com',
+                'https://FRONTEND.example.com:443',
+                'https://ports.example.com:4443',
+                'https://ports.example.com:4443',
+            ];
+        }
+        if ($jwt_bridge_origin_fixture === 'invalid') {
+            return [
+                'https://frontend.example.com',
+                'https://*.example.com',
+                'https://user:password@frontend.example.com',
+                'https://frontend.example.com/path',
+                'https://frontend.example.com?query=value',
+                'https://frontend.example.com#fragment',
+                'https://frontend.example.com:99999',
+                '//frontend.example.com',
+                "https://frontend.example.com\\evil",
+                "https://frontend.example.com\x01",
+            ];
+        }
+        if ($jwt_bridge_origin_fixture === 'empty') {
+            return [];
+        }
+
+        return $default_origins;
+    });
 }
 
 if (getenv('JWT_BRIDGE_TEST_DISABLE_FIREBASE_AUTOLOAD') !== '1') {
@@ -91,6 +118,17 @@ add_action('jwt_login_register_validators', function (): void {
 });
 
 add_action('rest_api_init', function (): void {
+    register_rest_route('jwt-bridge-test/v1', '/origin-config', [
+        'methods'             => 'GET',
+        'permission_callback' => 'jwt_bridge_test_authorized',
+        'callback'            => function (): WP_REST_Response {
+            return new WP_REST_Response([
+                'allowed' => jwt_login_allowed_frontend_origins(),
+                'frame'   => jwt_login_frame_ancestor_origins(),
+            ]);
+        },
+    ]);
+
     register_rest_route('jwt-bridge-test/v1', '/authenticated-user', [
         'methods'             => 'GET',
         'permission_callback' => 'jwt_bridge_test_authorized',

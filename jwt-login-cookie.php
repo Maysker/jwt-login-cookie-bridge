@@ -19,16 +19,20 @@
 if (!function_exists('jwt_login_allowed_origins')) {
     /**
      * Whitelisted frontend origins (exact matches; no wildcards).
-     * Adjust per environment.
+     * Replace this list with the jwt_login_allowed_origins filter from trusted
+     * server-side code instead of editing the Bridge plugin.
      */
     function jwt_login_allowed_origins(): array {
-        return [
+        $default_origins = [
             'https://frontend.example.com',
             // keep these for local/dev/testing if needed
             'https://dev.example.com',
             'https://localhost:4200',
             'http://localhost:4200',
         ];
+
+        $configured_origins = apply_filters('jwt_login_allowed_origins', $default_origins);
+        return is_array($configured_origins) ? $configured_origins : [];
     }
 }
 
@@ -353,7 +357,7 @@ if (!function_exists('jwt_login_canonical_origin')) {
         if (!is_string($value) || $value === '' || $value === 'null') {
             return '';
         }
-        if (preg_match('/[\x00-\x20\x7f,]/', $value)) {
+        if (preg_match('/[\x00-\x20\x7f,*\\\\]/', $value)) {
             return '';
         }
 
