@@ -127,7 +127,7 @@ add_action('jwt_login_register_validators', function (): void {
 
 This is an API example, not a built-in validator. Without exactly one registration matching `JWT_LOGIN_ACTIVE_VALIDATOR`, login fails closed.
 
-A complete optional RS256 adapter with its own Composer dependency and installation instructions is available in [`examples/rs256-validator`](examples/rs256-validator/README.md). It is not loaded or selected automatically and does not add a JWT dependency to the Bridge.
+A complete optional RS256 adapter is distributed as a separate plugin ZIP. For this release candidate, install `jwt-login-rs256-validator-1.0.0-rc2.zip` and follow the README packaged inside it. The adapter ZIP already contains its reviewed Composer dependencies. It is not included in the core ZIP, loaded or selected automatically, and it does not add a JWT dependency to the Bridge.
 
 ### 2. Top-level popup example
 
@@ -263,7 +263,7 @@ Bounce and WordPress redirect destinations are checked independently using their
 
 The plugin header's `Update URI` protects this independently hosted plugin from an unrelated WordPress.org slug collision. It does not make GitHub deliver updates automatically; updates remain a manual release-installation responsibility unless a separate trusted updater is configured.
 
-The declared minimums are WordPress 5.8 and PHP 7.4 based on the APIs and language features used. Release installation is verified on the pinned WordPress 7.1.3/PHP 8.3 environment; older supported combinations are not part of the release-candidate runtime matrix.
+The declared minimums are WordPress 5.8 and PHP 7.4 based on the APIs and language features used. Core plugin activation and safe HTTP 503 failure without a validator were smoke-tested on WordPress 5.8.3 with PHP 7.4.27. The full release-candidate integration tests used WordPress 7.1.3 with PHP 8.3; the minimum-version smoke test did not cover WooCommerce or the optional RS256 adapter.
 
 ---
 
@@ -286,7 +286,7 @@ The declared minimums are WordPress 5.8 and PHP 7.4 based on the APIs and langua
 You are free to use, modify, and redistribute this plugin under the same license. Attribution to the original author must be retained in derivative works.
 
 **Author:** [Adam Gazdiev](https://www.linkedin.com/in/adam-gazdiev/)\
-**Original project:** [https://github.com/Maysker/jwt-login-cookie](https://github.com/Maysker/jwt-login-cookie-bridge)
+**Original project:** [https://github.com/Maysker/jwt-login-cookie-bridge](https://github.com/Maysker/jwt-login-cookie-bridge)
 
 ---
 

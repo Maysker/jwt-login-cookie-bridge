@@ -2,7 +2,7 @@
 
 The planned 3.0.0 release is intentionally breaking. Version 2.3 could rely on ambient WordPress authentication behavior from another JWT plugin. The hardened Bridge accepts a JWT only through one explicitly selected, trusted validator and applies stricter token transport, Origin, cookie, redirect, and framing rules.
 
-Do not upgrade a production site until the validator and Origin configuration below have passed staging tests. The Bridge is provider-neutral: 3.0.0 is **not automatically compatible with any JWT provider**, and the included RS256 example is not a universal adapter for WordPress JWT plugins.
+Do not upgrade a production site until the validator and Origin configuration below have passed staging tests. The Bridge is provider-neutral: 3.0.0 is **not automatically compatible with any JWT provider**, and the separately distributed RS256 example is not a universal adapter for WordPress JWT plugins.
 
 ## Pre-upgrade checklist
 
@@ -13,7 +13,7 @@ Do not upgrade a production site until the validator and Origin configuration be
 - Configure the complete trusted frontend-Origin list from an MU-plugin as described below. Remove example and obsolete origins.
 - Inventory popup `return_origin`, bounce `return_to`, WordPress `redirect`, and any iframe checkout use. Confirm exact schemes and effective ports.
 - Record the current `COOKIE_DOMAIN`, any `JWT_LOGIN_COOKIE_DOMAIN`, WordPress home/site URLs, reverse-proxy HTTPS behavior, and logout flow.
-- Back up the database, `wp-config.php`, active plugin files, MU-plugins, and the current 2.3 package. Record active plugin versions and configuration without copying private keys into the backup archive unnecessarily.
+- Back up the database, `wp-config.php`, active plugin files, MU-plugins, and the exact deployed 2.3 Bridge plugin files. Record SHA-256 checksums for those deployed Bridge files along with active plugin versions and relevant site configuration, without copying private keys into the backup archive unnecessarily. There was no official public 2.3 release ZIP, so do not assume that the deployed files can be downloaded again later.
 - Test the complete login, conflict, checkout, logout, and rollback plan in a staging environment that matches production HTTPS, hostnames, cookie domains, proxy headers, and WooCommerce configuration.
 - Schedule the upgrade so 2.3 can be restored promptly if staging-only assumptions prove wrong. Do not use ambient JWT trust or disabled Origin checks as a rollback workaround.
 
@@ -43,14 +43,14 @@ Merely decoding a JWT, trusting a user ID supplied outside the signature, or acc
 
 ### Optional RS256 example
 
-The repository includes an independently installable adapter in `examples/rs256-validator`. It accepts only RS256 tokens matching one configured RSA public key, issuer, audience, lifetime policy, and positive WordPress user-ID claim. To use it:
+The optional adapter is distributed separately from the core Bridge ZIP. It accepts only RS256 tokens matching one configured RSA public key, issuer, audience, lifetime policy, and positive WordPress user-ID claim. To use it:
 
-1. Copy `examples/rs256-validator` to `wp-content/plugins/jwt-login-rs256-validator`.
-2. Run `composer install --no-dev --classmap-authoritative` inside that adapter directory.
-3. Configure `JWT_LOGIN_ACTIVE_VALIDATOR`, public-key file, issuer, audience, identity claim, and maximum lifetime in `wp-config.php`.
-4. Activate the adapter and test tokens from the actual issuer.
+1. Obtain the separately distributed adapter archive. For this release candidate, the file is `jwt-login-rs256-validator-1.0.0-rc2.zip`; it already contains the reviewed Composer dependencies.
+2. Place the RSA public key at a protected absolute path and configure `JWT_LOGIN_ACTIVE_VALIDATOR`, the public-key file, issuer, audience, identity claim, and maximum lifetime in `wp-config.php` before enabling the adapter for production authentication.
+3. Upload and activate the adapter ZIP as its own WordPress plugin.
+4. Test tokens from the actual issuer in staging.
 
-Follow the adapter's [complete installation and configuration guide](examples/rs256-validator/README.md). It does not load automatically, does not support symmetric algorithms, email mapping, arbitrary provider claims, or every WordPress JWT plugin. Confirm the provider's exact token contract before selecting it.
+Follow the complete installation and configuration guide packaged inside the adapter ZIP. The adapter does not load automatically and does not support symmetric algorithms, email mapping, arbitrary provider claims, or every WordPress JWT plugin. Confirm the provider's exact token contract before selecting it.
 
 ## 2. Configure persistent trusted frontend origins
 
@@ -117,4 +117,4 @@ Adding an origin does not make these modes interchangeable and does not require 
 
 In staging, test valid and invalid JWTs, each transport, allowed and denied Origins, CORS preflights, existing-cookie identity conflicts, popup and bounce destinations, WordPress redirects, checkout/order-pay framing, all cookie-domain transitions, logout, and validator-unavailable behavior. Test with the actual frontend and issuer over HTTPS.
 
-Before production deployment, take a fresh backup and keep the known-good 2.3 package and configuration available. If the upgrade fails, restore the previous plugin package and its matching configuration/database backup according to the site's normal rollback procedure, then diagnose the validator or Origin mismatch in staging. Do not restore service by accepting ambient users, skipping signature verification, permitting wildcard Origins, disabling Origin checks, or moving JWTs into query strings.
+Before production deployment, take a fresh backup and keep the checksummed copy of the exact deployed 2.3 Bridge files and matching site configuration available. If the upgrade fails, restore those previous plugin files and their matching configuration/database backup according to the site's normal rollback procedure, then diagnose the validator or Origin mismatch in staging. Treat rollback as a temporary recovery step while the hardened configuration is corrected; do not retain 2.3 as a permanent substitute for completing the security migration. Do not restore service by accepting ambient users, skipping signature verification, permitting wildcard Origins, disabling Origin checks, or moving JWTs into query strings.
