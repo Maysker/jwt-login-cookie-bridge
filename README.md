@@ -1,7 +1,6 @@
 # JWT Login Cookie Bridge
 
 **Version:** 3.0.0\
-**Author:** Adam Gazdiev\
 **License:** GPLv3 or later
 
 ---
@@ -10,9 +9,9 @@
 
 **JWT Login Cookie Bridge** is a lightweight WordPress plugin that enables **secure cross-domain login** between an external frontend (for example, an Angular or React SPA) and a WordPress/WooCommerce backend.
 
-It acts as a **bridge** that exchanges a verified JWT token for native WordPress cookies — configured for modern browser requirements (`SameSite=None; Secure; HttpOnly`) and protected by a strict CORS whitelist.
+JWT Login Cookie Bridge exchanges JWTs verified by a trusted validator for native WordPress authentication cookies. It uses `SameSite=None`, `Secure`, and `HttpOnly` cookie attributes and restricts browser-originated authentication requests to explicitly trusted origins.
 
-This plugin was originally developed for **AiroCollect**, a SaaS platform integrating WooCommerce orders with its own Angular-based frontend, but it can be adapted to any environment where you need to authenticate users across different domains.
+The original deployment integrated **AiroCollect**, a SaaS platform, with WooCommerce through its Angular frontend. The same design can support other cross-domain authentication environments.
 
 ---
 
@@ -285,15 +284,4 @@ The declared minimums are WordPress 5.8 and PHP 7.4 based on the APIs and langua
 
 You are free to use, modify, and redistribute this plugin under the same license. Attribution to the original author must be retained in derivative works.
 
-**Author:** [Adam Gazdiev](https://www.linkedin.com/in/adam-gazdiev/)\
 **Original project:** [https://github.com/Maysker/jwt-login-cookie-bridge](https://github.com/Maysker/jwt-login-cookie-bridge)
-
----
-
-## 💬 Notes
-
-This plugin was created in real-world production conditions, under limited administrative control, to solve authentication issues between an Angular SPA and WooCommerce.
-
-While situational by origin, its architecture is intentionally generic — anyone can adapt it for their own SSO or cross-domain login needs.
-
-> *“A small bridge between two worlds — WordPress and modern web apps.”*
