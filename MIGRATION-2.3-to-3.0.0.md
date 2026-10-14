@@ -1,6 +1,6 @@
 # Migrating JWT Login Cookie Bridge 2.3 to 3.0.0
 
-The planned 3.0.0 release is intentionally breaking. Version 2.3 could rely on ambient WordPress authentication behavior from another JWT plugin. The hardened Bridge accepts a JWT only through one explicitly selected, trusted validator and applies stricter token transport, Origin, cookie, redirect, and framing rules.
+Version 3.0.0 is intentionally breaking. Version 2.3 could rely on ambient WordPress authentication behavior from another JWT plugin. The hardened Bridge accepts a JWT only through one explicitly selected, trusted validator and applies stricter token transport, Origin, cookie, redirect, and framing rules.
 
 Do not upgrade a production site until the validator and Origin configuration below have passed staging tests. The Bridge is provider-neutral: 3.0.0 is **not automatically compatible with any JWT provider**, and the separately distributed RS256 example is not a universal adapter for WordPress JWT plugins.
 
@@ -45,7 +45,7 @@ Merely decoding a JWT, trusting a user ID supplied outside the signature, or acc
 
 The optional adapter is distributed separately from the core Bridge ZIP. It accepts only RS256 tokens matching one configured RSA public key, issuer, audience, lifetime policy, and positive WordPress user-ID claim. To use it:
 
-1. Obtain the separately distributed adapter archive. For this release candidate, the file is `jwt-login-rs256-validator-1.0.0-rc2.zip`; it already contains the reviewed Composer dependencies.
+1. Obtain the separately distributed [`jwt-login-rs256-validator-1.0.0.zip`](https://github.com/Maysker/jwt-login-cookie-bridge/releases/download/v3.0.0/jwt-login-rs256-validator-1.0.0.zip) archive; it already contains the reviewed Composer dependencies.
 2. Place the RSA public key at a protected absolute path and configure `JWT_LOGIN_ACTIVE_VALIDATOR`, the public-key file, issuer, audience, identity claim, and maximum lifetime in `wp-config.php` before enabling the adapter for production authentication.
 3. Upload and activate the adapter ZIP as its own WordPress plugin.
 4. Test tokens from the actual issuer in staging.

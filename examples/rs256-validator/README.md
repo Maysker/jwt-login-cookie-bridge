@@ -6,7 +6,7 @@ The example accepts only RS256 tokens verified by one administrator-configured R
 
 ## Release ZIP installation
 
-The curated validator release ZIP includes its own reviewed Composer dependencies. Before activation, place the public key at its protected absolute path and add the trusted configuration below to `wp-config.php`. Then upload the separately distributed adapter ZIP through **Plugins → Add Plugin → Upload Plugin**, activate it, and test the Bridge in staging with tokens from the actual issuer.
+The separately distributed [`jwt-login-rs256-validator-1.0.0.zip`](https://github.com/Maysker/jwt-login-cookie-bridge/releases/download/v3.0.0/jwt-login-rs256-validator-1.0.0.zip) includes its own reviewed Composer dependencies. Before activation, place the public key at its protected absolute path and add the trusted configuration below to `wp-config.php`. Then upload the adapter ZIP through **Plugins → Add Plugin → Upload Plugin**, activate it, and test the Bridge in staging with tokens from the actual issuer.
 
 The adapter's `Update URI` prevents a WordPress.org slug collision; it does not automatically deliver updates from GitHub.
 

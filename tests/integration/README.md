@@ -5,7 +5,7 @@ This environment exercises WordPress authentication, the bridge cookie helper, a
 ## Dependency assumptions from the repository
 
 - WordPress is required. The plugin uses the REST API, `WP_Session_Tokens`, pluggable auth-cookie functions, current-user filters, redirects, and cookie constants.
-- PHP must support typed declarations and the options-array form of `setcookie()`; the latter requires PHP 7.3 or newer. The plugin metadata currently declares no minimum PHP or WordPress version.
+- The core plugin declares WordPress 5.8 and PHP 7.4 as its minimum versions. The optional RS256 adapter declares WordPress 5.8 and PHP 8.0 because its packaged JWT dependency requires PHP 8.0 or newer.
 - WooCommerce is optional to the helper because `WC()` is guarded, but it is required for the documented `order-pay` production flow. The harness installs it to exercise plugin coexistence.
 - Production declares no JWT package. A trusted site extension must register exactly one explicitly selected validator; WordPress current-user hooks are not accepted as JWT validation.
 
