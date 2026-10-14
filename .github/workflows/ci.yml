@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-and-syntax:
+    name: Source and syntax checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Run source regression tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 tests/test_phase1.py
+
+      - name: Check Python syntax
+        env:
+          PYTHONPYCACHEPREFIX: /tmp/jwt-bridge-python-cache
+        run: python3 -m compileall -q tests
+
+      - name: Check Bash syntax
+        run: find . -type f -name '*.sh' -print0 | xargs -0 -r -n1 bash -n
+
+      - name: Check core PHP 7.4 syntax
+        run: >-
+          docker run --rm
+          --volume "$PWD:/workspace:ro"
+          --workdir /workspace
+          php:7.4-cli@sha256:620a6b9f4d4feef2210026172570465e9d0c1de79766418d3affd09190a7fda5
+          php -l jwt-login-cookie.php
+
+      - name: Check adapter and fixture PHP 8.0 syntax
+        run: >-
+          docker run --rm
+          --volume "$PWD:/workspace:ro"
+          --workdir /workspace
+          php:8.0-cli@sha256:0569e384b9064c04dec55dc6e41be41b494a878dfbb6577a7d76bd50cfd5bc00
+          sh -eu -c 'find examples tests -type f -name "*.php" -print | sort |
+          while IFS= read -r file; do php -l "$file"; done'
+
+  integration:
+    name: Disposable WordPress integration suite
+    needs: source-and-syntax
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Run full Docker integration suite
+        run: tests/integration/run.sh

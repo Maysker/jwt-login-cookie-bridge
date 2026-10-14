@@ -1,4 +1,4 @@
-# JWT Login Cookie Bridge (SameSite + CORS)
+# JWT Login Cookie Bridge
 
 **Version:** 3.0.0\
 **Author:** Adam Gazdiev\
@@ -31,7 +31,7 @@ This plugin was originally developed for **AiroCollect**, a SaaS platform integr
 
 ## 🧰 Installation
 
-1. **Install the release ZIP** in **Plugins → Add Plugin → Upload Plugin**, or extract it so the entry file is located at:
+1. **Install [`jwt-login-cookie-3.0.0.zip`](https://github.com/Maysker/jwt-login-cookie-bridge/releases/download/v3.0.0/jwt-login-cookie-3.0.0.zip)** in **Plugins → Add Plugin → Upload Plugin**, or extract it so the entry file is located at:
 
    ```bash
    wp-content/plugins/jwt-login-cookie/jwt-login-cookie.php
@@ -46,7 +46,7 @@ This plugin was originally developed for **AiroCollect**, a SaaS platform integr
 
 Basic WordPress login bridging does not require WooCommerce. WooCommerce is needed only for WooCommerce session bootstrapping and the documented checkout, `order-pay`, and optional iframe integration.
 
-For existing 2.3 installations, complete the [2.3 to 3.0.0 migration guide](MIGRATION-2.3-to-3.0.0.md) before upgrading. The planned 3.0.0 release does not automatically trust JWTs accepted by another WordPress plugin.
+For existing 2.3 installations, complete the [2.3 to 3.0.0 migration guide](MIGRATION-2.3-to-3.0.0.md) before upgrading. Version 3.0.0 does not automatically trust JWTs accepted by another WordPress plugin.
 
 ### Persistent frontend-Origin configuration
 
@@ -127,7 +127,7 @@ add_action('jwt_login_register_validators', function (): void {
 
 This is an API example, not a built-in validator. Without exactly one registration matching `JWT_LOGIN_ACTIVE_VALIDATOR`, login fails closed.
 
-A complete optional RS256 adapter is distributed as a separate plugin ZIP. For this release candidate, install `jwt-login-rs256-validator-1.0.0-rc2.zip` and follow the README packaged inside it. The adapter ZIP already contains its reviewed Composer dependencies. It is not included in the core ZIP, loaded or selected automatically, and it does not add a JWT dependency to the Bridge.
+A complete optional RS256 adapter is distributed as a separate plugin ZIP. Install [`jwt-login-rs256-validator-1.0.0.zip`](https://github.com/Maysker/jwt-login-cookie-bridge/releases/download/v3.0.0/jwt-login-rs256-validator-1.0.0.zip) and follow the README packaged inside it. The adapter ZIP already contains its reviewed Composer dependencies. It is not included in the core ZIP, loaded or selected automatically, and it does not add a JWT dependency to the Bridge.
 
 ### 2. Top-level popup example
 
@@ -251,7 +251,7 @@ private async loginOnShopAndGoToPayTopLevel(opts: {
 ## 🛡️ Security
 
 - Strict origin checking for CORS and redirects.
-- No tokens or credentials are stored server-side.
+- The Bridge does not persist the incoming raw JWT. WordPress maintains its normal session-verifier state for the authentication cookies the Bridge creates.
 - Cookies are always `HttpOnly`, `Secure`, and `SameSite=None`.
 - Works with HTTPS only.
 
@@ -263,7 +263,7 @@ Bounce and WordPress redirect destinations are checked independently using their
 
 The plugin header's `Update URI` protects this independently hosted plugin from an unrelated WordPress.org slug collision. It does not make GitHub deliver updates automatically; updates remain a manual release-installation responsibility unless a separate trusted updater is configured.
 
-The declared minimums are WordPress 5.8 and PHP 7.4 based on the APIs and language features used. Core plugin activation and safe HTTP 503 failure without a validator were smoke-tested on WordPress 5.8.3 with PHP 7.4.27. The full release-candidate integration tests used WordPress 7.1.3 with PHP 8.3; the minimum-version smoke test did not cover WooCommerce or the optional RS256 adapter.
+The declared minimums are WordPress 5.8 and PHP 7.4 based on the APIs and language features used. Core plugin activation and safe HTTP 503 failure without a validator were smoke-tested on WordPress 5.8.3 with PHP 7.4.27. The full 3.0.0 integration tests used WordPress 7.1.3 with PHP 8.3; the minimum-version smoke test did not cover WooCommerce or the optional RS256 adapter.
 
 ---
 
